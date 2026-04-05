@@ -160,6 +160,14 @@ function resetSession(chatId) {
   });
 }
 
+function pushHistoryEntry(session, role, text) {
+  if (!session || !text) return;
+  session.history.push({ role, text: String(text).trim() });
+  if (session.history.length > 10) {
+    session.history = session.history.slice(-10);
+  }
+}
+
 function normalizeText(value) {
   return String(value || '')
     .toLowerCase()
@@ -377,7 +385,7 @@ function looksLikeOrderInput(text) {
     return true;
   }
 
-  return parseNaturalOrderText(text).items.length > 0 || Boolean(findMenuItemByAlias(text));
+  return isAllMenuRequest(text) || parseNaturalOrderText(text).items.length > 0 || Boolean(findMenuItemByAlias(text));
 }
 
 function isDoneOrderingText(text) {
@@ -397,6 +405,20 @@ function isOrderSummaryQuestion(text) {
     normalized.includes('покажи заказ') ||
     normalized.includes('мой заказ')
   );
+}
+
+function isAllMenuRequest(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  return (
+    (normalized.includes('все') || normalized.includes('всё')) &&
+    (normalized.includes('меню') || normalized.includes('позиции') || normalized.includes('блюда') || normalized.includes('закуски'))
+  );
+}
+
+function buildAllMenuOrderItems() {
+  return MENU_ITEMS.map((item) => buildOrderItem(item, 1));
 }
 
 function extractMenuItemFromText(text) {
@@ -973,7 +995,7 @@ async function safeSendMenu(chatId) {
   }
 }
 
-async function answerMenuQuestion(question) {
+async function answerMenuQuestion(question, session = null) {
   const normalizedQuestion = normalizeText(question);
   const now = getCurrentDateTimeParts();
 
@@ -1028,7 +1050,15 @@ async function answerMenuQuestion(question) {
       },
       {
         role: 'user',
-        content: [{ type: 'input_text', text: question }]
+        content: [{
+          type: 'input_text',
+          text: [
+            session?.history?.length
+              ? `Контекст последних сообщений:\n${session.history.map((entry) => `${entry.role === 'assistant' ? 'Бот' : 'Клиент'}: ${entry.text}`).join('\n')}\n`
+              : '',
+            `Текущее сообщение клиента: ${question}`
+          ].filter(Boolean).join('\n\n')
+        }]
       }
     ]
   });
@@ -1099,51 +1129,57 @@ async function startBooking(chatId, withFood) {
 
 async function handleOrderFlow(chatId, text, session) {
   const data = session.data;
+  pushHistoryEntry(session, 'user', text);
 
   switch (session.step) {
     case 'items': {
       if (isOrderSummaryQuestion(text)) {
         data.total = calculateOrderTotal(data.orderItems);
-        await bot.sendMessage(chatId, summarizeCurrentCart(data), cancelKeyboard);
+        const reply = summarizeCurrentCart(data);
+        await bot.sendMessage(chatId, reply, cancelKeyboard);
+        pushHistoryEntry(session, 'assistant', reply);
         return;
       }
 
       if (isDoneOrderingText(text)) {
         if (!data.orderItems || data.orderItems.length === 0) {
-          await bot.sendMessage(chatId, 'Пока у вас нет ни одной позиции в заказе. Напишите, что хотите заказать.');
+          const reply = 'Пока у вас нет ни одной позиции в заказе. Напишите, что хотите заказать.';
+          await bot.sendMessage(chatId, reply);
+          pushHistoryEntry(session, 'assistant', reply);
           return;
         }
 
         data.total = calculateOrderTotal(data.orderItems);
 
         if (data.total < MIN_ORDER_TOTAL) {
-          await bot.sendMessage(
-            chatId,
-            `Сейчас в заказе ${formatMoney(data.total)}. Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.\nДобавьте, пожалуйста, ещё позиции или отмените заказ.`,
-            cancelKeyboard
-          );
+          const reply = `Сейчас в заказе ${formatMoney(data.total)}. Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.\nДобавьте, пожалуйста, ещё позиции или отмените заказ.`;
+          await bot.sendMessage(chatId, reply, cancelKeyboard);
+          pushHistoryEntry(session, 'assistant', reply);
           return;
         }
 
         nextOrderStep(session, 'delivery_details');
-        await bot.sendMessage(
-          chatId,
-          `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nЕсли чего-то нет, напишите "нет".`
-        );
+        const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nЕсли чего-то нет, напишите "нет".`;
+        await bot.sendMessage(chatId, reply);
+        pushHistoryEntry(session, 'assistant', reply);
         return;
       }
 
       if (!looksLikeOrderInput(text)) {
-        const answer = await answerMenuQuestion(text);
-        await bot.sendMessage(
-          chatId,
-          `${answer}\n\nКогда определитесь, просто напишите нужные блюда. Когда закончите, отправьте "всё".`,
-          cancelKeyboard
-        );
+        const answer = await answerMenuQuestion(text, session);
+        const reply = `${answer}\n\nКогда определитесь, просто напишите нужные блюда. Когда закончите, отправьте "всё".`;
+        await bot.sendMessage(chatId, reply, cancelKeyboard);
+        pushHistoryEntry(session, 'assistant', reply);
         return;
       }
 
-      let parsed = parseOrderItems(text);
+      let parsed = isAllMenuRequest(text)
+        ? {
+            items: buildAllMenuOrderItems(),
+            unknown: [],
+            total: calculateOrderTotal(buildAllMenuOrderItems())
+          }
+        : parseOrderItems(text);
 
       if (parsed.items.length === 0 || (!/\n/.test(text) && parsed.items.length <= 1)) {
         const naturalParsed = parseNaturalOrderText(text);
@@ -1153,7 +1189,9 @@ async function handleOrderFlow(chatId, text, session) {
       }
 
       if (parsed.items.length === 0) {
-        await bot.sendMessage(chatId, 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.');
+        const reply = 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.';
+        await bot.sendMessage(chatId, reply);
+        pushHistoryEntry(session, 'assistant', reply);
         return;
       }
 
@@ -1164,6 +1202,7 @@ async function handleOrderFlow(chatId, text, session) {
             `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я с радостью помогу собрать заказ.`,
             cancelKeyboard
           );
+          pushHistoryEntry(session, 'assistant', `${formatUnknownItemsMessage(parsed.unknown)} Напишите другие позиции, и я с радостью помогу собрать заказ.`);
           return;
         }
       }
@@ -1171,11 +1210,11 @@ async function handleOrderFlow(chatId, text, session) {
       data.orderItems = upsertOrderItems(data.orderItems, parsed.items);
       data.total = calculateOrderTotal(data.orderItems);
       const unknownBlock = parsed.unknown.length > 0 ? `\n\n${formatUnknownItemsMessage(parsed.unknown)}` : '';
-      await bot.sendMessage(
-        chatId,
-        `Добавил в заказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`,
-        cancelKeyboard
-      );
+      const reply = isAllMenuRequest(text)
+        ? `Добавил в заказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите, можете убрать лишнее через "Изменить заказ" или сразу отправить "всё".${unknownBlock}`
+        : `Добавил в заказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
+      await bot.sendMessage(chatId, reply, cancelKeyboard);
+      pushHistoryEntry(session, 'assistant', reply);
       return;
     }
 
@@ -1486,8 +1525,10 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    const answer = await answerMenuQuestion(text);
+    pushHistoryEntry(session, 'user', text);
+    const answer = await answerMenuQuestion(text, session);
     await bot.sendMessage(chatId, answer, mainKeyboard);
+    pushHistoryEntry(session, 'assistant', answer);
   } catch (error) {
     console.error('Bot error:', error);
 
