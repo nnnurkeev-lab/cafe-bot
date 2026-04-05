@@ -13,6 +13,7 @@ const MANAGER_ID = Number(process.env.MANAGER_ID || 7217238312);
 const MY_ID = Number(process.env.MY_ID || 979390128);
 const TIME_ZONE = 'Asia/Almaty';
 const MIN_ORDER_TOTAL = 4000;
+const CONTACT_MANAGER_TEXT = '👨‍💼 Связаться с менеджером';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -98,7 +99,8 @@ const MENU_ITEMS = [
 
 const MAIN_KEYBOARD_ROWS = [
   [{ text: '🍕 Заказать еду' }, { text: '🪑 Забронировать стол' }],
-  [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }]
+  [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
+  [{ text: CONTACT_MANAGER_TEXT }]
 ];
 
 function createKeyboard(rows, isPersistent = false) {
@@ -116,20 +118,24 @@ const mainKeyboard = createKeyboard(MAIN_KEYBOARD_ROWS, true);
 const bookingKeyboard = createKeyboard([
   [{ text: '🍽️ Забронировать + предзаказ блюд' }],
   [{ text: '🪑 Просто забронировать стол' }],
+  [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '⬅️ Главное меню' }]
 ]);
 
 const cancelKeyboard = createKeyboard([
+  [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
 ]);
 
 const confirmOrderKeyboard = createKeyboard([
   [{ text: '✅ Да, подтвердить заказ' }, { text: '✏️ Изменить заказ' }],
+  [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
 ]);
 
 const confirmBookingKeyboard = createKeyboard([
   [{ text: '✅ Да, подтвердить бронь' }, { text: '✏️ Изменить бронь' }],
+  [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить' }, { text: '⬅️ Главное меню' }]
 ]);
 
@@ -912,6 +918,47 @@ async function notifyManagers(text) {
   await Promise.allSettled(targets.map((id) => bot.sendMessage(id, text)));
 }
 
+function summarizeSessionForManager(session) {
+  if (!session) return 'Контекст не найден.';
+
+  const lines = [
+    `Текущий сценарий: ${session.flow || 'idle'}`,
+    `Шаг: ${session.step || 'нет'}`
+  ];
+
+  if (session.data?.name) lines.push(`Имя клиента: ${session.data.name}`);
+  if (session.data?.phone) lines.push(`Телефон клиента: ${session.data.phone}`);
+  if (session.data?.date) lines.push(`Дата: ${session.data.date}`);
+  if (session.data?.time) lines.push(`Время: ${session.data.time}`);
+  if (session.data?.guests) lines.push(`Гостей: ${session.data.guests}`);
+  if (session.data?.address) lines.push(`Адрес: ${session.data.address}`);
+  if (session.data?.orderItems?.length) {
+    lines.push(`Заказ: ${session.data.orderItems.map((item) => `${item.quantity} x ${item.name}`).join(', ')}`);
+  }
+  if (session.data?.preorderItems?.length) {
+    lines.push(`Предзаказ: ${session.data.preorderItems.map((item) => `${item.quantity} x ${item.name}`).join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+async function contactManager(chatId, session, user) {
+  const username = user?.username ? `@${user.username}` : 'не указан';
+  const managerMessage =
+    `🆘 Клиент просит связаться с менеджером\n\n` +
+    `👤 Telegram: ${user?.first_name || 'Гость'}${user?.last_name ? ` ${user.last_name}` : ''}\n` +
+    `🆔 Chat ID: ${chatId}\n` +
+    `🔗 Username: ${username}\n\n` +
+    `${summarizeSessionForManager(session)}`;
+
+  await notifyManagers(managerMessage);
+  await bot.sendMessage(
+    chatId,
+    'Передал ваш запрос менеджеру. Он увидит ваш контакт и текущий контекст обращения и свяжется с вами при первой возможности.',
+    mainKeyboard
+  );
+}
+
 async function safeSendMenu(chatId) {
   if (!MENU_PHOTO_ID) {
     await bot.sendMessage(chatId, `Меню:\n\n${MENU}`, cancelKeyboard);
@@ -1318,6 +1365,11 @@ bot.on('message', async (msg) => {
 
     if (text === '❌ Отменить' || text === '❌ Отменить заказ') {
       await goHome(chatId, 'Действие отменено. Если захотите вернуться, я на месте.');
+      return;
+    }
+
+    if (text === CONTACT_MANAGER_TEXT) {
+      await contactManager(chatId, session, msg.from);
       return;
     }
 
