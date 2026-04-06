@@ -927,7 +927,8 @@ function parseDeliveryDetails(text) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const cleaned = lines.map((line) => line.replace(/^[^:]+:\s*/u, '').trim());
+  const FIELD_LABEL_REGEX = /^(имя|телефон|адрес|подъезд|этаж|квартира|домофон|время(?: доставки)?|комментарий(?: к курьеру)?):\s*/iu;
+  const cleaned = lines.map((line) => line.replace(FIELD_LABEL_REGEX, '').trim());
 
   if (cleaned.length >= 9) {
     const [name, phone, address, entrance, floor, apartment, intercom, deliveryTime, ...commentParts] = cleaned;
