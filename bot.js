@@ -294,7 +294,7 @@ function formatMoney(amount) {
 
 function isWorkingHours() {
   const { hour: hours } = getCurrentDateTimeParts();
-  return hours >= 14 || hours < 2;
+  return hours >= 8 || hours < 2;
 }
 
 function getCurrentTimeText() {
@@ -374,7 +374,7 @@ function parseTime(text) {
 
 function isBookingTimeAllowed(parsedTime) {
   if (!parsedTime) return false;
-  return parsedTime.hours >= 14 || parsedTime.hours < 2;
+  return parsedTime.hours >= 8 || parsedTime.hours < 2;
 }
 
 function looksLikeOrderInput(text) {
@@ -856,6 +856,40 @@ function summarizeCurrentCart(data) {
   );
 }
 
+function summarizeCurrentPreorder(data) {
+  if (!data.preorderItems || data.preorderItems.length === 0) {
+    return 'Пока в предзаказе ничего нет. Напишите, что хотите добавить, или отправьте "нет".';
+  }
+
+  const total = calculateOrderTotal(data.preorderItems);
+  return (
+    `Сейчас у вас в предзаказе:\n${formatOrderItems(data.preorderItems)}\n\n` +
+    `Итого: ${formatMoney(total)}. Если хотите добавить что-то ещё, просто напишите следующую позицию. Когда закончите, отправьте "всё".`
+  );
+}
+
+function parseFlexibleOrderInput(text) {
+  if (isAllMenuRequest(text)) {
+    const items = buildAllMenuOrderItems();
+    return {
+      items,
+      unknown: [],
+      total: calculateOrderTotal(items)
+    };
+  }
+
+  let parsed = parseOrderItems(text);
+
+  if (parsed.items.length === 0 || (!/\n/.test(text) && parsed.items.length <= 1)) {
+    const naturalParsed = parseNaturalOrderText(text);
+    if (naturalParsed.items.length > 0 || naturalParsed.unknown.length > 0) {
+      parsed = naturalParsed;
+    }
+  }
+
+  return parsed;
+}
+
 function summarizeBooking(data) {
   const preorder = data.preorderItems && data.preorderItems.length > 0
     ? `\n🍽️ Предзаказ:\n${formatOrderItems(data.preorderItems)}\n\n💰 Предзаказ на сумму: ${formatMoney(data.preorderTotal)}`
@@ -1000,7 +1034,7 @@ async function answerMenuQuestion(question, session = null) {
   const now = getCurrentDateTimeParts();
 
   if (normalizedQuestion.includes('сегодня') || normalizedQuestion.includes('сейчас') || normalizedQuestion.includes('время') || normalizedQuestion.includes('число')) {
-    return `Сейчас по Алматы ${now.time}, сегодня ${now.date}. Заказы принимаем с 14:00 до 02:00.`;
+    return `Сейчас по Алматы ${now.time}, сегодня ${now.date}. Заказы принимаем с 08:00 до 02:00.`;
   }
 
   if (
@@ -1013,7 +1047,7 @@ async function answerMenuQuestion(question, session = null) {
       return `Сейчас по Алматы ${now.time}, сегодня ${now.date}. Мы принимаем заказы до 02:00.`;
     }
 
-    return `Сейчас по Алматы ${now.time}, сегодня ${now.date}. С 02:00 до 14:00 мы временно не принимаем заказы. Будем рады помочь после 14:00.`;
+    return `Сейчас по Алматы ${now.time}, сегодня ${now.date}. С 02:00 до 08:00 мы временно не принимаем заказы. Будем рады помочь после 08:00.`;
   }
 
   const mentionedItem = findMenuItemByAlias(question);
@@ -1041,7 +1075,7 @@ async function answerMenuQuestion(question, session = null) {
             type: 'input_text',
             text:
               `Ты администратор ресторана. Отвечай только на русском, коротко и дружелюбно. ` +
-              `Сегодня ${now.date}, текущее время по Алматы ${now.time}. Заказы на доставку принимаются только с 14:00 до 02:00 по времени Алматы. ` +
+              `Сегодня ${now.date}, текущее время по Алматы ${now.time}. Заказы на доставку принимаются только с 08:00 до 02:00 по времени Алматы. ` +
               `Не придумывай блюда вне меню. Если блюда нет, вежливо скажи об этом и предложи 2-4 похожие позиции из списка. ` +
               `Если пользователь пишет с опечаткой или неполным названием, старайся сопоставить это с меню. ` +
               `Если сейчас нерабочее время для доставки, скажи об этом уважительно.\n\nМеню:\n${MENU}`
@@ -1086,7 +1120,7 @@ async function startOrder(chatId) {
     const now = getCurrentDateTimeParts();
     await bot.sendMessage(
       chatId,
-      `Сейчас по Алматы ${now.time}, сегодня ${now.date}. С 02:00 до 14:00 мы временно не принимаем заказы. Будем рады помочь после 14:00.`,
+      `Сейчас по Алматы ${now.time}, сегодня ${now.date}. С 02:00 до 08:00 мы временно не принимаем заказы. Будем рады помочь после 08:00.`,
       mainKeyboard
     );
     return;
@@ -1173,20 +1207,7 @@ async function handleOrderFlow(chatId, text, session) {
         return;
       }
 
-      let parsed = isAllMenuRequest(text)
-        ? {
-            items: buildAllMenuOrderItems(),
-            unknown: [],
-            total: calculateOrderTotal(buildAllMenuOrderItems())
-          }
-        : parseOrderItems(text);
-
-      if (parsed.items.length === 0 || (!/\n/.test(text) && parsed.items.length <= 1)) {
-        const naturalParsed = parseNaturalOrderText(text);
-        if (naturalParsed.items.length > 0 || naturalParsed.unknown.length > 0) {
-          parsed = naturalParsed;
-        }
-      }
+      const parsed = parseFlexibleOrderInput(text);
 
       if (parsed.items.length === 0) {
         const reply = 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.';
@@ -1240,7 +1261,7 @@ async function handleOrderFlow(chatId, text, session) {
         return;
       }
       if (parsedDetails.error === 'INVALID_TIME') {
-        await bot.sendMessage(chatId, 'Ресторан, к сожалению, принимает заказы только с 14:00 до 02:00. Пожалуйста, укажите время доставки в этом интервале и отправьте данные ещё раз одним сообщением.');
+        await bot.sendMessage(chatId, 'Ресторан, к сожалению, принимает заказы только с 08:00 до 02:00. Пожалуйста, укажите время доставки в этом интервале и отправьте данные ещё раз одним сообщением.');
         return;
       }
 
@@ -1299,7 +1320,7 @@ async function handleBookingFlow(chatId, text, session) {
     case 'time': {
       const parsedTime = parseTime(text);
       if (!parsedTime || !isBookingTimeAllowed(parsedTime)) {
-        await bot.sendMessage(chatId, 'Бронь принимается в часы работы: с 14:00 до 02:00. Укажите время в формате ЧЧ:ММ.');
+        await bot.sendMessage(chatId, 'Бронь принимается в часы работы: с 08:00 до 02:00. Укажите время в формате ЧЧ:ММ.');
         return;
       }
       data.time = parsedTime.value;
@@ -1327,10 +1348,12 @@ async function handleBookingFlow(chatId, text, session) {
       }
 
       if (withFood) {
+        data.preorderItems = [];
+        data.preorderTotal = 0;
         nextBookingStep(session, 'preorder', true);
         await bot.sendMessage(
           chatId,
-          `Подобрал столик №${data.tableNum}. Если хотите предзаказ, отправьте позиции, каждую с новой строки, например:\n1 x Казы\n2 x Сырные палочки\n\nЕсли предзаказ не нужен, напишите "нет".`,
+          `Подобрал столик №${data.tableNum}. Теперь можете оформить предзаказ так же, как обычный заказ: пишите позиции свободно, например "хочу казы и сырные палочки" или "2 x Казы". Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`,
           cancelKeyboard
         );
       } else {
@@ -1340,35 +1363,61 @@ async function handleBookingFlow(chatId, text, session) {
       return;
 
     case 'preorder':
-      if (normalizeText(text) === 'нет') {
-        data.preorderItems = [];
-        data.preorderTotal = 0;
-      } else {
-        if (!looksLikeOrderInput(text)) {
-          const answer = await answerMenuQuestion(text);
-          await bot.sendMessage(
-            chatId,
-            `${answer}\n\nЕсли хотите добавить предзаказ, отправьте позиции в формате:\n1 x Казы\n2 x Сырные палочки\n\nЕсли предзаказ не нужен, напишите "нет".`,
-            cancelKeyboard
-          );
-          return;
-        }
-
-        const parsed = parseOrderItems(text);
-        if (parsed.items.length === 0) {
-          await bot.sendMessage(chatId, 'Не получилось распознать позиции предзаказа. Используйте формат "2 x Название блюда" или напишите "нет".');
-          return;
-        }
-        if (parsed.unknown.length > 0) {
-          await bot.sendMessage(chatId, `Не нашёл в меню эти позиции:\n${parsed.unknown.join('\n')}`);
-          return;
-        }
-        data.preorderItems = parsed.items;
-        data.preorderTotal = parsed.total;
+      if (isOrderSummaryQuestion(text)) {
+        data.preorderTotal = calculateOrderTotal(data.preorderItems);
+        await bot.sendMessage(chatId, summarizeCurrentPreorder(data), cancelKeyboard);
+        return;
       }
 
-      nextBookingStep(session, 'confirm', true);
-      await bot.sendMessage(chatId, summarizeBooking(data), confirmBookingKeyboard);
+      if (normalizeText(text) === 'нет' && (!data.preorderItems || data.preorderItems.length === 0)) {
+        data.preorderItems = [];
+        data.preorderTotal = 0;
+        nextBookingStep(session, 'confirm', true);
+        await bot.sendMessage(chatId, summarizeBooking(data), confirmBookingKeyboard);
+        return;
+      }
+
+      if (isDoneOrderingText(text)) {
+        data.preorderTotal = calculateOrderTotal(data.preorderItems);
+        nextBookingStep(session, 'confirm', true);
+        await bot.sendMessage(chatId, summarizeBooking(data), confirmBookingKeyboard);
+        return;
+      }
+
+      if (!looksLikeOrderInput(text)) {
+        const answer = await answerMenuQuestion(text, session);
+        await bot.sendMessage(
+          chatId,
+          `${answer}\n\nЕсли хотите добавить предзаказ, просто напишите нужные блюда. Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`,
+          cancelKeyboard
+        );
+        return;
+      }
+
+      const parsed = parseFlexibleOrderInput(text);
+      if (parsed.items.length === 0) {
+        await bot.sendMessage(chatId, 'Не получилось понять, какие позиции добавить в предзаказ. Напишите блюда так, как вам удобно.');
+        return;
+      }
+
+      if (parsed.unknown.length > 0 && parsed.items.length === 0) {
+        await bot.sendMessage(
+          chatId,
+          `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я помогу собрать предзаказ.`,
+          cancelKeyboard
+        );
+        return;
+      }
+
+      data.preorderItems = upsertOrderItems(data.preorderItems, parsed.items);
+      data.preorderTotal = calculateOrderTotal(data.preorderItems);
+      {
+        const unknownBlock = parsed.unknown.length > 0 ? `\n\n${formatUnknownItemsMessage(parsed.unknown)}` : '';
+        const reply = isAllMenuRequest(text)
+          ? `Добавил в предзаказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`
+          : `Добавил в предзаказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
+        await bot.sendMessage(chatId, reply, cancelKeyboard);
+      }
       return;
 
     case 'confirm':
@@ -1425,7 +1474,7 @@ bot.on('message', async (msg) => {
         `• принять заказ на доставку\n` +
         `• помочь с бронью столика\n` +
         `• подсказать по меню\n\n` +
-        `Заказы на доставку принимаются с 14:00 до 02:00 по Алматы.\n` +
+        `Заказы на доставку принимаются с 08:00 до 02:00 по Алматы.\n` +
         `Сейчас в ресторане: ${getCurrentTimeText()}`,
         mainKeyboard
       );
