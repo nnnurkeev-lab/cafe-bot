@@ -410,7 +410,93 @@ function parseDate(text) {
 }
 
 function parseTime(text) {
-  const match = String(text || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  const rawText = String(text || '').trim();
+  const normalized = normalizeText(rawText);
+
+  if (normalized === 'сейчас') {
+    const now = getCurrentDateTimeParts();
+    return {
+      hours: now.hour,
+      minutes: now.minute,
+      value: `${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`
+    };
+  }
+
+  if (normalized === 'полдень') {
+    return { hours: 12, minutes: 0, value: '12:00' };
+  }
+
+  if (normalized === 'полночь') {
+    return { hours: 0, minutes: 0, value: '00:00' };
+  }
+
+  const relativeHourMatch = normalized.match(/^через\s+(\d+)\s*(час|часа|часов)$/u);
+  if (relativeHourMatch) {
+    const addHours = Number(relativeHourMatch[1]);
+    const now = getCurrentDateTimeParts();
+    const totalMinutes = now.hour * 60 + now.minute + addHours * 60;
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    return {
+      hours,
+      minutes,
+      value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+    };
+  }
+
+  const relativeMinuteMatch = normalized.match(/^через\s+(\d+)\s*(минут|минута|минуты)$/u);
+  if (relativeMinuteMatch) {
+    const addMinutes = Number(relativeMinuteMatch[1]);
+    const now = getCurrentDateTimeParts();
+    const totalMinutes = now.hour * 60 + now.minute + addMinutes;
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    return {
+      hours,
+      minutes,
+      value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+    };
+  }
+
+  const naturalMatch = normalized.match(/^(\d{1,2})(?::(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u)
+    || normalized.match(/^(\d{1,2})\s*(?:час|часа|часов)(?::(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u);
+
+  if (naturalMatch) {
+    let hours = Number(naturalMatch[1]);
+    const minutes = naturalMatch[2] ? Number(naturalMatch[2]) : 0;
+    const period = naturalMatch[3] || '';
+
+    if (minutes > 59 || hours > 24) return null;
+
+    if (period === 'утра') {
+      if (hours === 12) hours = 0;
+    } else if (period === 'дня') {
+      if (hours >= 1 && hours <= 11) hours += 12;
+    } else if (period === 'вечера') {
+      if (hours >= 1 && hours <= 11) hours += 12;
+    } else if (period === 'ночи') {
+      if (hours === 12) hours = 0;
+      if (hours >= 1 && hours <= 5) {
+        hours = hours;
+      } else if (hours >= 6 && hours <= 11) {
+        hours += 12;
+      }
+    }
+
+    if (hours === 24 && minutes === 0) {
+      hours = 0;
+    }
+
+    if (hours > 23) return null;
+
+    return {
+      hours,
+      minutes,
+      value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+    };
+  }
+
+  const match = rawText.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
 
   const hours = Number(match[1]);
@@ -1423,7 +1509,7 @@ async function handleOrderFlow(chatId, text, session) {
         return;
       }
       if (parsedDetails.error === 'INVALID_TIME') {
-        await bot.sendMessage(chatId, 'Ресторан, к сожалению, принимает заказы только с 08:00 до 02:00. Пожалуйста, укажите время доставки в этом интервале и отправьте данные ещё раз одним сообщением.');
+        await bot.sendMessage(chatId, 'Ресторан, к сожалению, принимает заказы только с 08:00 до 02:00. Можно указать время как "15:00", "3 дня", "8 утра" или "через час". Пожалуйста, отправьте данные ещё раз одним сообщением.');
         return;
       }
 
@@ -1482,7 +1568,7 @@ async function handleBookingFlow(chatId, text, session) {
     case 'time': {
       const parsedTime = parseTime(text);
       if (!parsedTime || !isBookingTimeAllowed(parsedTime)) {
-        await bot.sendMessage(chatId, 'Бронь принимается в часы работы: с 08:00 до 02:00. Укажите время в формате ЧЧ:ММ.');
+        await bot.sendMessage(chatId, 'Бронь принимается в часы работы: с 08:00 до 02:00. Можно указать время как "15:00", "3 дня", "8 утра" или "через час".');
         return;
       }
       data.time = parsedTime.value;
