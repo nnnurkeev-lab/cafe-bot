@@ -19,6 +19,8 @@ const HOT_APPETIZERS_TEXT = '🔥 Горячие закуски';
 const MENU_SECTIONS_TEXT = '📂 Разделы меню';
 const FINISH_SELECTION_TEXT = '✅ Завершить выбор';
 const SKIP_PREORDER_TEXT = '🚫 Без предзаказа';
+const CASH_PAYMENT_TEXT = 'Оплата наличными при получении';
+const CARD_PAYMENT_TEXT = 'Оплата картой/Kaspi QR';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -175,6 +177,13 @@ const cancelKeyboard = createKeyboard([
 const confirmOrderKeyboard = createKeyboard([
   [{ text: '✅ Да, подтвердить заказ' }, { text: '✏️ Изменить заказ' }],
   [{ text: CONTACT_MANAGER_TEXT }],
+  [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
+]);
+
+const paymentKeyboard = createKeyboard([
+  [{ text: CASH_PAYMENT_TEXT }],
+  [{ text: CARD_PAYMENT_TEXT }],
+  [{ text: '✏️ Изменить заказ' }],
   [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
 ]);
 
@@ -1001,6 +1010,7 @@ function summarizeOrder(data) {
     `🔢 Домофон: ${data.intercom}\n` +
     `🍽️ Позиции:\n${formatOrderItems(data.orderItems)}\n\n` +
     `💰 Сумма заказа: ${formatMoney(data.total)}\n` +
+    `💳 Оплата: ${data.paymentMethod || 'не выбрана'}\n` +
     `⏰ Время доставки: ${data.deliveryTime}\n` +
     `💬 Комментарий: ${data.comment || 'нет'}`
   );
@@ -1519,6 +1529,10 @@ async function handleOrderFlow(chatId, text, session) {
       return;
     }
 
+    case 'payment':
+      await bot.sendMessage(chatId, 'Выберите, пожалуйста, способ оплаты кнопками ниже.', paymentKeyboard);
+      return;
+
     case 'confirm':
       await bot.sendMessage(chatId, `Сумма вашего заказа: ${formatMoney(data.total)}.\nИспользуйте кнопки ниже, чтобы подтвердить заказ, изменить его или вернуться в главное меню.`, confirmOrderKeyboard);
       return;
@@ -1774,6 +1788,17 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '✅ Да, подтвердить заказ' && session.flow === 'order' && session.step === 'confirm') {
+      nextOrderStep(session, 'payment');
+      await bot.sendMessage(
+        chatId,
+        `Сумма вашего заказа: ${formatMoney(session.data.total)}.\nВыберите, пожалуйста, способ оплаты:`,
+        paymentKeyboard
+      );
+      return;
+    }
+
+    if (text === CASH_PAYMENT_TEXT && session.flow === 'order' && session.step === 'payment') {
+      session.data.paymentMethod = 'Наличными при получении';
       await saveOrder(session.data);
 
       const managerMsg =
@@ -1787,11 +1812,36 @@ bot.on('message', async (msg) => {
         `🔢 Домофон: ${session.data.intercom}\n` +
         `🍽️ Позиции:\n${formatOrderItems(session.data.orderItems)}\n\n` +
         `💰 Сумма: ${formatMoney(session.data.total)}\n` +
+        `💳 Оплата: ${session.data.paymentMethod}\n` +
         `⏰ Время: ${session.data.deliveryTime}\n` +
         `💬 Комментарий: ${session.data.comment || 'нет'}`;
 
       await notifyManagers(managerMsg);
-      await goHome(chatId, '✅ Заказ подтверждён. Ожидайте звонка для подтверждения. Спасибо, что выбрали нас!');
+      await goHome(chatId, `✅ Заказ подтверждён.\nСпособ оплаты: ${CASH_PAYMENT_TEXT}.\nОжидайте звонка для подтверждения. Спасибо, что выбрали нас!`);
+      return;
+    }
+
+    if (text === CARD_PAYMENT_TEXT && session.flow === 'order' && session.step === 'payment') {
+      session.data.paymentMethod = 'Картой/Kaspi QR';
+      await saveOrder(session.data);
+
+      const managerMsg =
+        `🔔 Новый заказ!\n\n` +
+        `👤 Клиент: ${session.data.name}\n` +
+        `📞 Телефон: ${session.data.phone}\n` +
+        `📍 Адрес: ${session.data.address}\n` +
+        `🚪 Подъезд: ${session.data.entrance}\n` +
+        `🏢 Этаж: ${session.data.floor}\n` +
+        `🏠 Квартира: ${session.data.apartment}\n` +
+        `🔢 Домофон: ${session.data.intercom}\n` +
+        `🍽️ Позиции:\n${formatOrderItems(session.data.orderItems)}\n\n` +
+        `💰 Сумма: ${formatMoney(session.data.total)}\n` +
+        `💳 Оплата: ${session.data.paymentMethod}\n` +
+        `⏰ Время: ${session.data.deliveryTime}\n` +
+        `💬 Комментарий: ${session.data.comment || 'нет'}`;
+
+      await notifyManagers(managerMsg);
+      await goHome(chatId, `✅ Заказ подтверждён.\nСпособ оплаты: ${CARD_PAYMENT_TEXT}.\nОжидайте звонка для подтверждения. Спасибо, что выбрали нас!`);
       return;
     }
 
