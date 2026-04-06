@@ -21,6 +21,7 @@ const FINISH_SELECTION_TEXT = '✅ Завершить выбор';
 const SKIP_PREORDER_TEXT = '🚫 Без предзаказа';
 const CASH_PAYMENT_TEXT = 'Оплата наличными при получении';
 const CARD_PAYMENT_TEXT = 'Оплата картой/Kaspi QR';
+const CURRENT_ORDER_TEXT = '🧾 Мой заказ';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -134,7 +135,8 @@ function createMenuSectionKeyboard(section, options = {}) {
     .map((item) => item.name);
 
   const rows = chunkButtons(names, 2);
-  rows.push([{ text: MENU_SECTIONS_TEXT }, { text: FINISH_SELECTION_TEXT }]);
+  rows.push([{ text: MENU_SECTIONS_TEXT }, { text: CURRENT_ORDER_TEXT }]);
+  rows.push([{ text: FINISH_SELECTION_TEXT }]);
 
   if (options.allowSkipPreorder) {
     rows.push([{ text: SKIP_PREORDER_TEXT }]);
@@ -148,6 +150,7 @@ function createMenuSectionKeyboard(section, options = {}) {
 function createMenuCategoryKeyboard(options = {}) {
   const rows = [
     [{ text: COLD_APPETIZERS_TEXT }, { text: HOT_APPETIZERS_TEXT }],
+    [{ text: CURRENT_ORDER_TEXT }],
     [{ text: FINISH_SELECTION_TEXT }]
   ];
 
@@ -556,15 +559,21 @@ function isRejectionText(text) {
 
 function isOrderSummaryQuestion(text) {
   const normalized = normalizeText(text);
+  if (normalized === normalizeText(CURRENT_ORDER_TEXT)) {
+    return true;
+  }
+
+  const hasOrderWord = ['заказ', 'заказе', 'заказал', 'заказали'].some((word) => normalized.includes(word));
+  const hasQueryWord = ['что', 'какой', 'какие', 'покажи', 'показать', 'посмотреть', 'сейчас', 'итого'].some((word) => normalized.includes(word));
+  const hasPossessiveWord = ['мой', 'меня', 'мне', 'наш', 'нас', 'мы', 'я'].some((word) => normalized.includes(word));
+
   return (
-    normalized.includes('какой мой заказ') ||
-    normalized.includes('что у меня в заказе') ||
-    normalized.includes('что в заказе') ||
-    normalized.includes('что я заказал') ||
-    normalized.includes('что мы заказали') ||
     normalized.includes('итого') ||
     normalized.includes('покажи заказ') ||
-    normalized.includes('мой заказ')
+    normalized.includes('мой заказ') ||
+    normalized.includes('что в заказе') ||
+    (hasOrderWord && hasQueryWord) ||
+    (hasOrderWord && hasPossessiveWord)
   );
 }
 
