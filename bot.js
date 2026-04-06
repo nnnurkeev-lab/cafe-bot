@@ -577,6 +577,53 @@ function isOrderSummaryQuestion(text) {
   );
 }
 
+function isRecommendationRequest(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  return [
+    'помоги выбрать',
+    'помочь выбрать',
+    'что выбрать',
+    'посоветуй',
+    'посоветуйте',
+    'что посоветуешь',
+    'что посоветуете',
+    'что взять',
+    'что попробовать',
+    'порекомендуй',
+    'порекомендуйте'
+  ].some((phrase) => normalized.includes(phrase));
+}
+
+function buildRecommendationsText() {
+  const cold = [
+    'Сырная доска',
+    'Рулетики с сёмгой',
+    'Ассорти солений'
+  ].map((name) => MENU_ITEMS.find((item) => item.name === name)).filter(Boolean);
+
+  const hot = [
+    'Королевские креветки в темпуре',
+    'Крылышки в соусе терияки',
+    'Сырные палочки'
+  ].map((name) => MENU_ITEMS.find((item) => item.name === name)).filter(Boolean);
+
+  const coldText = cold.map((item) => `• ${item.name} — ${formatMoney(item.price)}`).join('\n');
+  const hotText = hot.map((item) => `• ${item.name} — ${formatMoney(item.price)}`).join('\n');
+
+  return (
+    `Могу подсказать с выбором.\n\n` +
+    `Из холодных закусок часто выбирают:\n${coldText}\n\n` +
+    `Из горячих закусок могу посоветовать:\n${hotText}\n\n` +
+    `Если хотите, могу ещё подобрать варианты:\n` +
+    `• под компанию\n` +
+    `• к пиву\n` +
+    `• подешевле\n` +
+    `• посытнее`
+  );
+}
+
 function isAllMenuRequest(text) {
   const normalized = normalizeText(text);
   if (!normalized) return false;
@@ -1103,6 +1150,239 @@ async function openMenuSection(chatId, session, mode, section) {
   );
 }
 
+function detectSelectionIntent(text, session, mode = 'order') {
+  const data = session.data || {};
+  const isPreorder = mode === 'preorder';
+  const normalized = normalizeText(text);
+
+  if (data.pendingSuggestedItem && isConfirmationText(text)) {
+    return { type: 'confirm_suggested_item', itemName: data.pendingSuggestedItem };
+  }
+
+  if (data.pendingSuggestedItem && isRejectionText(text)) {
+    return { type: 'reject_suggested_item' };
+  }
+
+  if (text === COLD_APPETIZERS_TEXT) {
+    return { type: 'open_section', section: 'cold' };
+  }
+
+  if (text === HOT_APPETIZERS_TEXT) {
+    return { type: 'open_section', section: 'hot' };
+  }
+
+  if (text === MENU_SECTIONS_TEXT) {
+    return { type: 'show_sections' };
+  }
+
+  if (isOrderSummaryQuestion(text)) {
+    return { type: 'show_summary' };
+  }
+
+  if (isRecommendationRequest(text)) {
+    return { type: 'recommend' };
+  }
+
+  if (isDoneOrderingText(text)) {
+    return { type: 'finish' };
+  }
+
+  if (isPreorder && (normalized === 'нет' || text === SKIP_PREORDER_TEXT) && (!data.preorderItems || data.preorderItems.length === 0)) {
+    return { type: 'skip_preorder' };
+  }
+
+  if (!looksLikeOrderInput(text)) {
+    const suggestedItem = findSuggestedMenuItem(text);
+    if (suggestedItem) {
+      return { type: 'suggest_item', item: suggestedItem };
+    }
+    return { type: 'menu_question' };
+  }
+
+  const parsed = parseFlexibleOrderInput(text);
+  if (parsed.items.length === 0) {
+    return { type: 'parse_error', parsed };
+  }
+
+  return { type: 'add_items', parsed };
+}
+
+async function handleSelectionIntent(chatId, text, session, mode = 'order') {
+  const data = session.data;
+  const isPreorder = mode === 'preorder';
+  const keyboard = getSelectionKeyboard(session, mode);
+  const itemsKey = isPreorder ? 'preorderItems' : 'orderItems';
+  const totalKey = isPreorder ? 'preorderTotal' : 'total';
+  const emptyMessage = isPreorder
+    ? 'Пока в предзаказе ничего нет. Напишите, что хотите добавить, или отправьте "нет".'
+    : 'Пока у вас нет ни одной позиции в заказе. Напишите, что хотите заказать.';
+  const recommendTail = isPreorder
+    ? 'Можете просто написать понравившиеся позиции, и я добавлю их в предзаказ.'
+    : 'Можете просто написать понравившиеся позиции, и я добавлю их в заказ.';
+  const summaryBuilder = isPreorder ? summarizeCurrentPreorder : summarizeCurrentCart;
+
+  const intent = detectSelectionIntent(text, session, mode);
+
+  switch (intent.type) {
+    case 'confirm_suggested_item': {
+      const item = findMenuItemByAlias(intent.itemName);
+      data.pendingSuggestedItem = null;
+
+      if (!item) {
+        const reply = 'Не получилось подтвердить позицию. Напишите название блюда ещё раз.';
+        await bot.sendMessage(chatId, reply, keyboard);
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      const addedItems = [buildOrderItem(item, 1)];
+      data[itemsKey] = upsertOrderItems(data[itemsKey], addedItems);
+      data[totalKey] = calculateOrderTotal(data[itemsKey]);
+      const reply = isPreorder
+        ? `Добавил в предзаказ:\n${formatOrderItems(addedItems)}\n\nСейчас в предзаказе на ${formatMoney(data[totalKey])}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".`
+        : `Добавил в заказ:\n${formatOrderItems(addedItems)}\n\nСейчас в заказе на ${formatMoney(data[totalKey])}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".`;
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'reject_suggested_item': {
+      data.pendingSuggestedItem = null;
+      const reply = 'Хорошо, не добавляю. Напишите, пожалуйста, нужное блюдо ещё раз.';
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'open_section':
+      await openMenuSection(chatId, session, mode, intent.section);
+      return;
+
+    case 'show_sections': {
+      if (isPreorder) {
+        data.preorderMenuSection = null;
+        await bot.sendMessage(chatId, 'Выберите раздел для предзаказа или продолжайте писать блюда текстом.', preorderCategoryKeyboard);
+      } else {
+        data.orderMenuSection = null;
+        await bot.sendMessage(chatId, 'Выберите раздел меню или продолжайте писать блюда текстом.', orderCategoryKeyboard);
+      }
+      return;
+    }
+
+    case 'show_summary': {
+      data[totalKey] = calculateOrderTotal(data[itemsKey]);
+      const reply = summaryBuilder(data);
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'recommend': {
+      const reply = `${buildRecommendationsText()}\n\n${recommendTail}`;
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'finish': {
+      const selectedItems = data[itemsKey] || [];
+      if (!isPreorder && selectedItems.length === 0) {
+        const reply = emptyMessage;
+        await bot.sendMessage(chatId, reply, keyboard);
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      data[totalKey] = calculateOrderTotal(selectedItems);
+
+      if (isPreorder) {
+        nextBookingStep(session, 'confirm', true);
+        const reply = summarizeBooking(data);
+        await bot.sendMessage(chatId, reply, confirmBookingKeyboard);
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      if (data.total < MIN_ORDER_TOTAL) {
+        const reply = `Сейчас в заказе ${formatMoney(data.total)}. Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.\nДобавьте, пожалуйста, ещё позиции или отмените заказ.`;
+        await bot.sendMessage(chatId, reply, keyboard);
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      nextOrderStep(session, 'delivery_details');
+      const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nЕсли чего-то нет, напишите "нет".`;
+      await bot.sendMessage(chatId, reply);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'skip_preorder': {
+      data.preorderItems = [];
+      data.preorderTotal = 0;
+      nextBookingStep(session, 'confirm', true);
+      const reply = summarizeBooking(data);
+      await bot.sendMessage(chatId, reply, confirmBookingKeyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'suggest_item': {
+      data.pendingSuggestedItem = intent.item.name;
+      const reply = `Вы, наверное, имеете в виду ${intent.item.name}. Он стоит ${formatMoney(intent.item.price)}. Напишите "да", и я добавлю его ${isPreorder ? 'в предзаказ' : 'в заказ'}, или отправьте другое блюдо.`;
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'menu_question': {
+      const answer = await answerMenuQuestion(text, session);
+      const reply = isPreorder
+        ? `${answer}\n\nЕсли хотите добавить предзаказ, просто напишите нужные блюда. Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`
+        : `${answer}\n\nКогда определитесь, просто напишите нужные блюда. Когда закончите, отправьте "всё".`;
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'parse_error': {
+      const parsed = intent.parsed;
+      if (parsed.unknown.length > 0) {
+        const reply = isPreorder
+          ? `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я помогу собрать предзаказ.`
+          : `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я с радостью помогу собрать заказ.`;
+        await bot.sendMessage(chatId, reply, keyboard);
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      const reply = isPreorder
+        ? 'Не получилось понять, какие позиции добавить в предзаказ. Напишите блюда так, как вам удобно.'
+        : 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.';
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    case 'add_items': {
+      const parsed = intent.parsed;
+      data.pendingSuggestedItem = null;
+      data[itemsKey] = upsertOrderItems(data[itemsKey], parsed.items);
+      data[totalKey] = calculateOrderTotal(data[itemsKey]);
+      const unknownBlock = parsed.unknown.length > 0 ? `\n\n${formatUnknownItemsMessage(parsed.unknown)}` : '';
+      const reply = isAllMenuRequest(text)
+        ? `Добавил ${isPreorder ? 'в предзаказ' : 'в заказ'} все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас ${isPreorder ? 'в предзаказе' : 'в заказе'} на ${formatMoney(data[totalKey])}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`
+        : `Добавил ${isPreorder ? 'в предзаказ' : 'в заказ'}:\n${formatOrderItems(parsed.items)}\n\nСейчас ${isPreorder ? 'в предзаказе' : 'в заказе'} на ${formatMoney(data[totalKey])}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
+      await bot.sendMessage(chatId, reply, keyboard);
+      pushHistoryEntry(session, 'assistant', reply);
+      return;
+    }
+
+    default:
+      return;
+  }
+}
+
 function summarizeBooking(data) {
   const preorder = data.preorderItems && data.preorderItems.length > 0
     ? `\n🍽️ Предзаказ:\n${formatOrderItems(data.preorderItems)}\n\n💰 Предзаказ на сумму: ${formatMoney(data.preorderTotal)}`
@@ -1154,6 +1434,7 @@ async function saveOrder(data) {
     apartment: data.apartment,
     intercom: data.intercom,
     order_items: data.orderItems.map((item) => `${item.quantity} x ${item.name}`).join(', '),
+    payment_method: data.paymentMethod || 'не выбрана',
     time: data.deliveryTime,
     comment: data.comment || 'нет'
   };
@@ -1381,131 +1662,9 @@ async function handleOrderFlow(chatId, text, session) {
   pushHistoryEntry(session, 'user', text);
 
   switch (session.step) {
-    case 'items': {
-      if (data.pendingSuggestedItem && isConfirmationText(text)) {
-        const item = findMenuItemByAlias(data.pendingSuggestedItem);
-        data.pendingSuggestedItem = null;
-
-        if (!item) {
-          const reply = 'Не получилось подтвердить позицию. Напишите название блюда ещё раз.';
-          await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-          pushHistoryEntry(session, 'assistant', reply);
-          return;
-        }
-
-        data.orderItems = upsertOrderItems(data.orderItems, [buildOrderItem(item, 1)]);
-        data.total = calculateOrderTotal(data.orderItems);
-        const reply = `Добавил в заказ:\n${formatOrderItems([buildOrderItem(item, 1)])}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".`;
-        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      if (data.pendingSuggestedItem && isRejectionText(text)) {
-        data.pendingSuggestedItem = null;
-        const reply = 'Хорошо, не добавляю. Напишите, пожалуйста, нужное блюдо ещё раз.';
-        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      if (text === COLD_APPETIZERS_TEXT) {
-        await openMenuSection(chatId, session, 'order', 'cold');
-        return;
-      }
-
-      if (text === HOT_APPETIZERS_TEXT) {
-        await openMenuSection(chatId, session, 'order', 'hot');
-        return;
-      }
-
-      if (text === MENU_SECTIONS_TEXT) {
-        data.orderMenuSection = null;
-        await bot.sendMessage(chatId, 'Выберите раздел меню или продолжайте писать блюда текстом.', orderCategoryKeyboard);
-        return;
-      }
-
-      if (isOrderSummaryQuestion(text)) {
-        data.total = calculateOrderTotal(data.orderItems);
-        const reply = summarizeCurrentCart(data);
-        await bot.sendMessage(chatId, reply, cancelKeyboard);
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      if (isDoneOrderingText(text)) {
-        if (!data.orderItems || data.orderItems.length === 0) {
-          const reply = 'Пока у вас нет ни одной позиции в заказе. Напишите, что хотите заказать.';
-          await bot.sendMessage(chatId, reply);
-          pushHistoryEntry(session, 'assistant', reply);
-          return;
-        }
-
-        data.total = calculateOrderTotal(data.orderItems);
-
-        if (data.total < MIN_ORDER_TOTAL) {
-          const reply = `Сейчас в заказе ${formatMoney(data.total)}. Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.\nДобавьте, пожалуйста, ещё позиции или отмените заказ.`;
-          await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-          pushHistoryEntry(session, 'assistant', reply);
-          return;
-        }
-
-        nextOrderStep(session, 'delivery_details');
-        const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nЕсли чего-то нет, напишите "нет".`;
-        await bot.sendMessage(chatId, reply);
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      if (!looksLikeOrderInput(text)) {
-        const suggestedItem = findSuggestedMenuItem(text);
-        if (suggestedItem) {
-          data.pendingSuggestedItem = suggestedItem.name;
-          const reply = `Вы, наверное, имеете в виду ${suggestedItem.name}. Он стоит ${formatMoney(suggestedItem.price)}. Напишите "да", и я добавлю его в заказ, или отправьте другое блюдо.`;
-          await bot.sendMessage(chatId, reply, cancelKeyboard);
-          pushHistoryEntry(session, 'assistant', reply);
-          return;
-        }
-
-        const answer = await answerMenuQuestion(text, session);
-        const reply = `${answer}\n\nКогда определитесь, просто напишите нужные блюда. Когда закончите, отправьте "всё".`;
-        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      const parsed = parseFlexibleOrderInput(text);
-      data.pendingSuggestedItem = null;
-
-      if (parsed.items.length === 0) {
-        const reply = 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.';
-        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-        pushHistoryEntry(session, 'assistant', reply);
-        return;
-      }
-
-      if (parsed.unknown.length > 0) {
-        if (parsed.items.length === 0) {
-          await bot.sendMessage(
-            chatId,
-            `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я с радостью помогу собрать заказ.`,
-            getSelectionKeyboard(session, 'order')
-          );
-          pushHistoryEntry(session, 'assistant', `${formatUnknownItemsMessage(parsed.unknown)} Напишите другие позиции, и я с радостью помогу собрать заказ.`);
-          return;
-        }
-      }
-
-      data.orderItems = upsertOrderItems(data.orderItems, parsed.items);
-      data.total = calculateOrderTotal(data.orderItems);
-      const unknownBlock = parsed.unknown.length > 0 ? `\n\n${formatUnknownItemsMessage(parsed.unknown)}` : '';
-      const reply = isAllMenuRequest(text)
-        ? `Добавил в заказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите, можете убрать лишнее через "Изменить заказ" или сразу отправить "всё".${unknownBlock}`
-        : `Добавил в заказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
-      await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
-      pushHistoryEntry(session, 'assistant', reply);
+    case 'items':
+      await handleSelectionIntent(chatId, text, session, 'order');
       return;
-    }
 
     case 'delivery_details': {
       const parsedDetails = parseDeliveryDetails(text);
@@ -1636,77 +1795,7 @@ async function handleBookingFlow(chatId, text, session) {
       return;
 
     case 'preorder':
-      if (text === COLD_APPETIZERS_TEXT) {
-        await openMenuSection(chatId, session, 'preorder', 'cold');
-        return;
-      }
-
-      if (text === HOT_APPETIZERS_TEXT) {
-        await openMenuSection(chatId, session, 'preorder', 'hot');
-        return;
-      }
-
-      if (text === MENU_SECTIONS_TEXT) {
-        data.preorderMenuSection = null;
-        await bot.sendMessage(chatId, 'Выберите раздел для предзаказа или продолжайте писать блюда текстом.', preorderCategoryKeyboard);
-        return;
-      }
-
-      if (isOrderSummaryQuestion(text)) {
-        data.preorderTotal = calculateOrderTotal(data.preorderItems);
-        await bot.sendMessage(chatId, summarizeCurrentPreorder(data), getSelectionKeyboard(session, 'preorder'));
-        return;
-      }
-
-      if ((normalizeText(text) === 'нет' || text === SKIP_PREORDER_TEXT) && (!data.preorderItems || data.preorderItems.length === 0)) {
-        data.preorderItems = [];
-        data.preorderTotal = 0;
-        nextBookingStep(session, 'confirm', true);
-        await bot.sendMessage(chatId, summarizeBooking(data), confirmBookingKeyboard);
-        return;
-      }
-
-      if (isDoneOrderingText(text)) {
-        data.preorderTotal = calculateOrderTotal(data.preorderItems);
-        nextBookingStep(session, 'confirm', true);
-        await bot.sendMessage(chatId, summarizeBooking(data), confirmBookingKeyboard);
-        return;
-      }
-
-      if (!looksLikeOrderInput(text)) {
-        const answer = await answerMenuQuestion(text, session);
-        await bot.sendMessage(
-          chatId,
-          `${answer}\n\nЕсли хотите добавить предзаказ, просто напишите нужные блюда. Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`,
-          getSelectionKeyboard(session, 'preorder')
-        );
-        return;
-      }
-
-      const parsed = parseFlexibleOrderInput(text);
-      if (parsed.items.length === 0) {
-        await bot.sendMessage(chatId, 'Не получилось понять, какие позиции добавить в предзаказ. Напишите блюда так, как вам удобно.', getSelectionKeyboard(session, 'preorder'));
-        return;
-      }
-
-      if (parsed.unknown.length > 0 && parsed.items.length === 0) {
-        await bot.sendMessage(
-          chatId,
-          `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я помогу собрать предзаказ.`,
-          getSelectionKeyboard(session, 'preorder')
-        );
-        return;
-      }
-
-      data.preorderItems = upsertOrderItems(data.preorderItems, parsed.items);
-      data.preorderTotal = calculateOrderTotal(data.preorderItems);
-      {
-        const unknownBlock = parsed.unknown.length > 0 ? `\n\n${formatUnknownItemsMessage(parsed.unknown)}` : '';
-        const reply = isAllMenuRequest(text)
-          ? `Добавил в предзаказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`
-          : `Добавил в предзаказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
-        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'preorder'));
-      }
+      await handleSelectionIntent(chatId, text, session, 'preorder');
       return;
 
     case 'confirm':
@@ -1791,9 +1880,9 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '✏️ Изменить заказ' && session.flow === 'order') {
-      session.data = { orderItems: [], total: 0 };
+      session.data = { orderItems: [], total: 0, orderMenuSection: null, paymentMethod: null };
       nextOrderStep(session, 'items');
-      await bot.sendMessage(chatId, 'Начнём заново. Напишите, что хотите заказать. Когда закончите, отправьте "всё".', cancelKeyboard);
+      await bot.sendMessage(chatId, 'Начнём заново. Напишите, что хотите заказать. Можно писать свободно или выбрать раздел кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё".', orderCategoryKeyboard);
       return;
     }
 
