@@ -14,6 +14,11 @@ const MY_ID = Number(process.env.MY_ID || 979390128);
 const TIME_ZONE = 'Asia/Almaty';
 const MIN_ORDER_TOTAL = 4000;
 const CONTACT_MANAGER_TEXT = '👨‍💼 Связаться с менеджером';
+const COLD_APPETIZERS_TEXT = '🥗 Холодные закуски';
+const HOT_APPETIZERS_TEXT = '🔥 Горячие закуски';
+const MENU_SECTIONS_TEXT = '📂 Разделы меню';
+const FINISH_SELECTION_TEXT = '✅ Завершить выбор';
+const SKIP_PREORDER_TEXT = '🚫 Без предзаказа';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -67,34 +72,34 @@ const MENU = `
 `.trim();
 
 const MENU_ITEMS = [
-  { name: 'Мясное ассорти', aliases: ['мясное ассорти'], price: 4290 },
-  { name: 'Конское ассорти', aliases: ['конское ассорти'], price: 4390 },
-  { name: 'Рыбное ассорти', aliases: ['рыбное ассорти'], price: 4490 },
-  { name: 'Сырная доска', aliases: ['сырная доска'], price: 3990 },
-  { name: 'Русская закуска', aliases: ['русская закуска'], price: 2290 },
-  { name: 'Кавказская закуска', aliases: ['кавказская закуска'], price: 2590 },
-  { name: 'Ассорти солений', aliases: ['ассорти солений'], price: 2390 },
-  { name: 'Рулетики по-грузински', aliases: ['рулетики по-грузински'], price: 2390 },
-  { name: 'Рулетики с сёмгой', aliases: ['рулетики с сёмгой', 'рулетики с семгой'], price: 3090 },
-  { name: 'Казы', aliases: ['казы'], price: 2090 },
-  { name: 'Оливки', aliases: ['оливки'], price: 790 },
-  { name: 'Запеченные мозговые кости', aliases: ['запеченные мозговые кости'], price: 2790 },
-  { name: 'Жульен с курицей', aliases: ['жульен с курицей'], price: 2390 },
-  { name: 'Жульен с грибами', aliases: ['жульен с грибами'], price: 2390 },
-  { name: 'Мини-чебуреки', aliases: ['мини-чебуреки', 'мини чебуреки'], price: 2090 },
-  { name: 'Крылышки в соусе терияки', aliases: ['крылышки в соусе терияки'], price: 2690 },
-  { name: 'Крылышки в соусе свит-чили', aliases: ['крылышки в соусе свит-чили', 'крылышки в соусе свит чили'], price: 2590 },
-  { name: 'Острые крылышки в хрустящей панировке', aliases: ['острые крылышки в хрустящей панировке', 'острые крылышки'], price: 2590 },
-  { name: 'Креветки к пиву', aliases: ['креветки к пиву'], price: 2990 },
-  { name: 'Сырные палочки', aliases: ['сырные палочки'], price: 2190 },
-  { name: 'Куриные стрипсы', aliases: ['куриные стрипсы'], price: 2090 },
-  { name: 'Луковые кольца', aliases: ['луковые кольца'], price: 1690 },
-  { name: 'Королевские креветки в темпуре', aliases: ['королевские креветки в темпуре'], price: 3890 },
-  { name: 'Мойва на шпажках', aliases: ['мойва на шпажках'], price: 2090 },
-  { name: 'Хрустящие шампиньоны с чесночным соусом', aliases: ['хрустящие шампиньоны с чесночным соусом', 'хрустящие шампиньоны'], price: 2090 },
-  { name: 'Шампиньоны запеченные под сыром', aliases: ['шампиньоны запеченные под сыром'], price: 2290 },
-  { name: 'Долма', aliases: ['долма'], price: 2290 },
-  { name: 'Картофельная доска', aliases: ['картофельная доска'], price: 3990 }
+  { name: 'Мясное ассорти', aliases: ['мясное ассорти'], price: 4290, category: 'cold' },
+  { name: 'Конское ассорти', aliases: ['конское ассорти'], price: 4390, category: 'cold' },
+  { name: 'Рыбное ассорти', aliases: ['рыбное ассорти'], price: 4490, category: 'cold' },
+  { name: 'Сырная доска', aliases: ['сырная доска'], price: 3990, category: 'cold' },
+  { name: 'Русская закуска', aliases: ['русская закуска'], price: 2290, category: 'cold' },
+  { name: 'Кавказская закуска', aliases: ['кавказская закуска'], price: 2590, category: 'cold' },
+  { name: 'Ассорти солений', aliases: ['ассорти солений'], price: 2390, category: 'cold' },
+  { name: 'Рулетики по-грузински', aliases: ['рулетики по-грузински'], price: 2390, category: 'cold' },
+  { name: 'Рулетики с сёмгой', aliases: ['рулетики с сёмгой', 'рулетики с семгой'], price: 3090, category: 'cold' },
+  { name: 'Казы', aliases: ['казы'], price: 2090, category: 'cold' },
+  { name: 'Оливки', aliases: ['оливки'], price: 790, category: 'cold' },
+  { name: 'Запеченные мозговые кости', aliases: ['запеченные мозговые кости', 'мозги', 'мозговые кости', 'мозговые'], price: 2790, category: 'hot' },
+  { name: 'Жульен с курицей', aliases: ['жульен с курицей'], price: 2390, category: 'hot' },
+  { name: 'Жульен с грибами', aliases: ['жульен с грибами'], price: 2390, category: 'hot' },
+  { name: 'Мини-чебуреки', aliases: ['мини-чебуреки', 'мини чебуреки'], price: 2090, category: 'hot' },
+  { name: 'Крылышки в соусе терияки', aliases: ['крылышки в соусе терияки'], price: 2690, category: 'hot' },
+  { name: 'Крылышки в соусе свит-чили', aliases: ['крылышки в соусе свит-чили', 'крылышки в соусе свит чили'], price: 2590, category: 'hot' },
+  { name: 'Острые крылышки в хрустящей панировке', aliases: ['острые крылышки в хрустящей панировке', 'острые крылышки'], price: 2590, category: 'hot' },
+  { name: 'Креветки к пиву', aliases: ['креветки к пиву'], price: 2990, category: 'hot' },
+  { name: 'Сырные палочки', aliases: ['сырные палочки'], price: 2190, category: 'hot' },
+  { name: 'Куриные стрипсы', aliases: ['куриные стрипсы'], price: 2090, category: 'hot' },
+  { name: 'Луковые кольца', aliases: ['луковые кольца'], price: 1690, category: 'hot' },
+  { name: 'Королевские креветки в темпуре', aliases: ['королевские креветки в темпуре', 'королевские креветки', 'каралевски креветки', 'креветки в темпуре'], price: 3890, category: 'hot' },
+  { name: 'Мойва на шпажках', aliases: ['мойва на шпажках'], price: 2090, category: 'hot' },
+  { name: 'Хрустящие шампиньоны с чесночным соусом', aliases: ['хрустящие шампиньоны с чесночным соусом', 'хрустящие шампиньоны'], price: 2090, category: 'hot' },
+  { name: 'Шампиньоны запеченные под сыром', aliases: ['шампиньоны запеченные под сыром'], price: 2290, category: 'hot' },
+  { name: 'Долма', aliases: ['долма'], price: 2290, category: 'hot' },
+  { name: 'Картофельная доска', aliases: ['картофельная доска'], price: 3990, category: 'hot' }
 ];
 
 const MAIN_KEYBOARD_ROWS = [
@@ -111,6 +116,46 @@ function createKeyboard(rows, isPersistent = false) {
       is_persistent: isPersistent
     }
   };
+}
+
+function chunkButtons(items, size = 2) {
+  const rows = [];
+  for (let index = 0; index < items.length; index += size) {
+    rows.push(items.slice(index, index + size).map((text) => ({ text })));
+  }
+  return rows;
+}
+
+function createMenuSectionKeyboard(section, options = {}) {
+  const names = MENU_ITEMS
+    .filter((item) => item.category === section)
+    .map((item) => item.name);
+
+  const rows = chunkButtons(names, 2);
+  rows.push([{ text: MENU_SECTIONS_TEXT }, { text: FINISH_SELECTION_TEXT }]);
+
+  if (options.allowSkipPreorder) {
+    rows.push([{ text: SKIP_PREORDER_TEXT }]);
+  }
+
+  rows.push([{ text: CONTACT_MANAGER_TEXT }]);
+  rows.push([{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]);
+  return createKeyboard(rows);
+}
+
+function createMenuCategoryKeyboard(options = {}) {
+  const rows = [
+    [{ text: COLD_APPETIZERS_TEXT }, { text: HOT_APPETIZERS_TEXT }],
+    [{ text: FINISH_SELECTION_TEXT }]
+  ];
+
+  if (options.allowSkipPreorder) {
+    rows.unshift([{ text: SKIP_PREORDER_TEXT }]);
+  }
+
+  rows.push([{ text: CONTACT_MANAGER_TEXT }]);
+  rows.push([{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]);
+  return createKeyboard(rows);
 }
 
 const mainKeyboard = createKeyboard(MAIN_KEYBOARD_ROWS, true);
@@ -138,6 +183,13 @@ const confirmBookingKeyboard = createKeyboard([
   [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить' }, { text: '⬅️ Главное меню' }]
 ]);
+
+const orderCategoryKeyboard = createMenuCategoryKeyboard();
+const preorderCategoryKeyboard = createMenuCategoryKeyboard({ allowSkipPreorder: true });
+const coldOrderKeyboard = createMenuSectionKeyboard('cold');
+const hotOrderKeyboard = createMenuSectionKeyboard('hot');
+const coldPreorderKeyboard = createMenuSectionKeyboard('cold', { allowSkipPreorder: true });
+const hotPreorderKeyboard = createMenuSectionKeyboard('hot', { allowSkipPreorder: true });
 
 function getSession(chatId) {
   if (!sessions.has(chatId)) {
@@ -381,6 +433,10 @@ function looksLikeOrderInput(text) {
   const normalized = normalizeText(text);
   if (!normalized) return false;
 
+  if (isConfirmationText(normalized) || isRejectionText(normalized)) {
+    return false;
+  }
+
   if (/^\d+\s*[xх*]\s+.+$/i.test(String(text || '').trim())) {
     return true;
   }
@@ -390,7 +446,17 @@ function looksLikeOrderInput(text) {
 
 function isDoneOrderingText(text) {
   const normalized = normalizeText(text);
-  return ['все', 'всё', 'готово', 'это все', 'это всё', 'хватит'].includes(normalized);
+  return ['все', 'всё', 'готово', 'это все', 'это всё', 'хватит', normalizeText(FINISH_SELECTION_TEXT)].includes(normalized);
+}
+
+function isConfirmationText(text) {
+  const normalized = normalizeText(text);
+  return ['да', 'ага', 'угу', 'ок', 'окей', 'хорошо', 'подтверждаю'].includes(normalized);
+}
+
+function isRejectionText(text) {
+  const normalized = normalizeText(text);
+  return ['нет', 'неа', 'не надо', 'не нужно', 'отмена'].includes(normalized);
 }
 
 function isOrderSummaryQuestion(text) {
@@ -419,6 +485,16 @@ function isAllMenuRequest(text) {
 
 function buildAllMenuOrderItems() {
   return MENU_ITEMS.map((item) => buildOrderItem(item, 1));
+}
+
+function findSuggestedMenuItem(text) {
+  const normalized = normalizeText(text);
+  if (!normalized || normalized.length < 4) return null;
+
+  const suggestions = suggestMenuItems(text, 1);
+  if (suggestions.length === 0) return null;
+
+  return MENU_ITEMS.find((item) => item.name === suggestions[0]) || null;
 }
 
 function extractMenuItemFromText(text) {
@@ -890,6 +966,37 @@ function parseFlexibleOrderInput(text) {
   return parsed;
 }
 
+function getSelectionKeyboard(session, mode = 'order') {
+  const sectionKey = mode === 'preorder' ? session?.data?.preorderMenuSection : session?.data?.orderMenuSection;
+
+  if (mode === 'preorder') {
+    if (sectionKey === 'cold') return coldPreorderKeyboard;
+    if (sectionKey === 'hot') return hotPreorderKeyboard;
+    return preorderCategoryKeyboard;
+  }
+
+  if (sectionKey === 'cold') return coldOrderKeyboard;
+  if (sectionKey === 'hot') return hotOrderKeyboard;
+  return orderCategoryKeyboard;
+}
+
+async function openMenuSection(chatId, session, mode, section) {
+  const isPreorder = mode === 'preorder';
+  const title = section === 'cold' ? 'Холодные закуски' : 'Горячие закуски';
+
+  if (isPreorder) {
+    session.data.preorderMenuSection = section;
+  } else {
+    session.data.orderMenuSection = section;
+  }
+
+  await bot.sendMessage(
+    chatId,
+    `Выберите позицию из раздела "${title}" или продолжайте писать текстом.`,
+    getSelectionKeyboard(session, mode)
+  );
+}
+
 function summarizeBooking(data) {
   const preorder = data.preorderItems && data.preorderItems.length > 0
     ? `\n🍽️ Предзаказ:\n${formatOrderItems(data.preorderItems)}\n\n💰 Предзаказ на сумму: ${formatMoney(data.preorderTotal)}`
@@ -1078,6 +1185,7 @@ async function answerMenuQuestion(question, session = null) {
               `Сегодня ${now.date}, текущее время по Алматы ${now.time}. Заказы на доставку принимаются только с 08:00 до 02:00 по времени Алматы. ` +
               `Не придумывай блюда вне меню. Если блюда нет, вежливо скажи об этом и предложи 2-4 похожие позиции из списка. ` +
               `Если пользователь пишет с опечаткой или неполным названием, старайся сопоставить это с меню. ` +
+              `Никогда не говори, что блюдо уже добавлено в заказ, если тебя об этом прямо не попросили подтвердить уже выполненное действие. ` +
               `Если сейчас нерабочее время для доставки, скажи об этом уважительно.\n\nМеню:\n${MENU}`
           }
         ]
@@ -1129,15 +1237,16 @@ async function startOrder(chatId) {
   const session = getSession(chatId);
   session.data = {
     orderItems: [],
-    total: 0
+    total: 0,
+    orderMenuSection: null
   };
   nextOrderStep(session, 'items');
 
   await safeSendMenu(chatId);
   await bot.sendMessage(
     chatId,
-    'Напишите, что хотите заказать. Можно писать свободно, например: "хочу сырную доску и куриные стрипсы". Когда закончите, напишите "всё".',
-    cancelKeyboard
+    'Напишите, что хотите заказать. Можно писать свободно или выбрать раздел кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё".',
+    orderCategoryKeyboard
   );
 }
 
@@ -1167,6 +1276,49 @@ async function handleOrderFlow(chatId, text, session) {
 
   switch (session.step) {
     case 'items': {
+      if (data.pendingSuggestedItem && isConfirmationText(text)) {
+        const item = findMenuItemByAlias(data.pendingSuggestedItem);
+        data.pendingSuggestedItem = null;
+
+        if (!item) {
+          const reply = 'Не получилось подтвердить позицию. Напишите название блюда ещё раз.';
+          await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
+          pushHistoryEntry(session, 'assistant', reply);
+          return;
+        }
+
+        data.orderItems = upsertOrderItems(data.orderItems, [buildOrderItem(item, 1)]);
+        data.total = calculateOrderTotal(data.orderItems);
+        const reply = `Добавил в заказ:\n${formatOrderItems([buildOrderItem(item, 1)])}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".`;
+        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      if (data.pendingSuggestedItem && isRejectionText(text)) {
+        data.pendingSuggestedItem = null;
+        const reply = 'Хорошо, не добавляю. Напишите, пожалуйста, нужное блюдо ещё раз.';
+        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
+        pushHistoryEntry(session, 'assistant', reply);
+        return;
+      }
+
+      if (text === COLD_APPETIZERS_TEXT) {
+        await openMenuSection(chatId, session, 'order', 'cold');
+        return;
+      }
+
+      if (text === HOT_APPETIZERS_TEXT) {
+        await openMenuSection(chatId, session, 'order', 'hot');
+        return;
+      }
+
+      if (text === MENU_SECTIONS_TEXT) {
+        data.orderMenuSection = null;
+        await bot.sendMessage(chatId, 'Выберите раздел меню или продолжайте писать блюда текстом.', orderCategoryKeyboard);
+        return;
+      }
+
       if (isOrderSummaryQuestion(text)) {
         data.total = calculateOrderTotal(data.orderItems);
         const reply = summarizeCurrentCart(data);
@@ -1187,7 +1339,7 @@ async function handleOrderFlow(chatId, text, session) {
 
         if (data.total < MIN_ORDER_TOTAL) {
           const reply = `Сейчас в заказе ${formatMoney(data.total)}. Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.\nДобавьте, пожалуйста, ещё позиции или отмените заказ.`;
-          await bot.sendMessage(chatId, reply, cancelKeyboard);
+          await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
           pushHistoryEntry(session, 'assistant', reply);
           return;
         }
@@ -1200,18 +1352,28 @@ async function handleOrderFlow(chatId, text, session) {
       }
 
       if (!looksLikeOrderInput(text)) {
+        const suggestedItem = findSuggestedMenuItem(text);
+        if (suggestedItem) {
+          data.pendingSuggestedItem = suggestedItem.name;
+          const reply = `Вы, наверное, имеете в виду ${suggestedItem.name}. Он стоит ${formatMoney(suggestedItem.price)}. Напишите "да", и я добавлю его в заказ, или отправьте другое блюдо.`;
+          await bot.sendMessage(chatId, reply, cancelKeyboard);
+          pushHistoryEntry(session, 'assistant', reply);
+          return;
+        }
+
         const answer = await answerMenuQuestion(text, session);
         const reply = `${answer}\n\nКогда определитесь, просто напишите нужные блюда. Когда закончите, отправьте "всё".`;
-        await bot.sendMessage(chatId, reply, cancelKeyboard);
+        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
         pushHistoryEntry(session, 'assistant', reply);
         return;
       }
 
       const parsed = parseFlexibleOrderInput(text);
+      data.pendingSuggestedItem = null;
 
       if (parsed.items.length === 0) {
         const reply = 'Не получилось понять, какую позицию вы хотите добавить. Напишите название блюда так, как вам удобно.';
-        await bot.sendMessage(chatId, reply);
+        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
         pushHistoryEntry(session, 'assistant', reply);
         return;
       }
@@ -1221,7 +1383,7 @@ async function handleOrderFlow(chatId, text, session) {
           await bot.sendMessage(
             chatId,
             `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я с радостью помогу собрать заказ.`,
-            cancelKeyboard
+            getSelectionKeyboard(session, 'order')
           );
           pushHistoryEntry(session, 'assistant', `${formatUnknownItemsMessage(parsed.unknown)} Напишите другие позиции, и я с радостью помогу собрать заказ.`);
           return;
@@ -1234,7 +1396,7 @@ async function handleOrderFlow(chatId, text, session) {
       const reply = isAllMenuRequest(text)
         ? `Добавил в заказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите, можете убрать лишнее через "Изменить заказ" или сразу отправить "всё".${unknownBlock}`
         : `Добавил в заказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в заказе на ${formatMoney(data.total)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
-      await bot.sendMessage(chatId, reply, cancelKeyboard);
+      await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'order'));
       pushHistoryEntry(session, 'assistant', reply);
       return;
     }
@@ -1350,11 +1512,12 @@ async function handleBookingFlow(chatId, text, session) {
       if (withFood) {
         data.preorderItems = [];
         data.preorderTotal = 0;
+        data.preorderMenuSection = null;
         nextBookingStep(session, 'preorder', true);
         await bot.sendMessage(
           chatId,
-          `Подобрал столик №${data.tableNum}. Теперь можете оформить предзаказ так же, как обычный заказ: пишите позиции свободно, например "хочу казы и сырные палочки" или "2 x Казы". Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`,
-          cancelKeyboard
+          `Подобрал столик №${data.tableNum}. Теперь можете оформить предзаказ так же, как обычный заказ: пишите позиции свободно или выбирайте разделы кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё". Если предзаказ не нужен, нажмите "🚫 Без предзаказа" или напишите "нет".`,
+          preorderCategoryKeyboard
         );
       } else {
         nextBookingStep(session, 'confirm', false);
@@ -1363,13 +1526,29 @@ async function handleBookingFlow(chatId, text, session) {
       return;
 
     case 'preorder':
-      if (isOrderSummaryQuestion(text)) {
-        data.preorderTotal = calculateOrderTotal(data.preorderItems);
-        await bot.sendMessage(chatId, summarizeCurrentPreorder(data), cancelKeyboard);
+      if (text === COLD_APPETIZERS_TEXT) {
+        await openMenuSection(chatId, session, 'preorder', 'cold');
         return;
       }
 
-      if (normalizeText(text) === 'нет' && (!data.preorderItems || data.preorderItems.length === 0)) {
+      if (text === HOT_APPETIZERS_TEXT) {
+        await openMenuSection(chatId, session, 'preorder', 'hot');
+        return;
+      }
+
+      if (text === MENU_SECTIONS_TEXT) {
+        data.preorderMenuSection = null;
+        await bot.sendMessage(chatId, 'Выберите раздел для предзаказа или продолжайте писать блюда текстом.', preorderCategoryKeyboard);
+        return;
+      }
+
+      if (isOrderSummaryQuestion(text)) {
+        data.preorderTotal = calculateOrderTotal(data.preorderItems);
+        await bot.sendMessage(chatId, summarizeCurrentPreorder(data), getSelectionKeyboard(session, 'preorder'));
+        return;
+      }
+
+      if ((normalizeText(text) === 'нет' || text === SKIP_PREORDER_TEXT) && (!data.preorderItems || data.preorderItems.length === 0)) {
         data.preorderItems = [];
         data.preorderTotal = 0;
         nextBookingStep(session, 'confirm', true);
@@ -1389,14 +1568,14 @@ async function handleBookingFlow(chatId, text, session) {
         await bot.sendMessage(
           chatId,
           `${answer}\n\nЕсли хотите добавить предзаказ, просто напишите нужные блюда. Когда закончите, отправьте "всё". Если предзаказ не нужен, напишите "нет".`,
-          cancelKeyboard
+          getSelectionKeyboard(session, 'preorder')
         );
         return;
       }
 
       const parsed = parseFlexibleOrderInput(text);
       if (parsed.items.length === 0) {
-        await bot.sendMessage(chatId, 'Не получилось понять, какие позиции добавить в предзаказ. Напишите блюда так, как вам удобно.');
+        await bot.sendMessage(chatId, 'Не получилось понять, какие позиции добавить в предзаказ. Напишите блюда так, как вам удобно.', getSelectionKeyboard(session, 'preorder'));
         return;
       }
 
@@ -1404,7 +1583,7 @@ async function handleBookingFlow(chatId, text, session) {
         await bot.sendMessage(
           chatId,
           `${formatUnknownItemsMessage(parsed.unknown)}\n\nНапишите другие позиции, и я помогу собрать предзаказ.`,
-          cancelKeyboard
+          getSelectionKeyboard(session, 'preorder')
         );
         return;
       }
@@ -1416,7 +1595,7 @@ async function handleBookingFlow(chatId, text, session) {
         const reply = isAllMenuRequest(text)
           ? `Добавил в предзаказ все позиции из меню по 1 порции.\n\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`
           : `Добавил в предзаказ:\n${formatOrderItems(parsed.items)}\n\nСейчас в предзаказе на ${formatMoney(data.preorderTotal)}. Если хотите что-то ещё, напишите следующую позицию. Когда закончите, отправьте "всё".${unknownBlock}`;
-        await bot.sendMessage(chatId, reply, cancelKeyboard);
+        await bot.sendMessage(chatId, reply, getSelectionKeyboard(session, 'preorder'));
       }
       return;
 
