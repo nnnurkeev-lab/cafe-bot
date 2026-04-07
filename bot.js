@@ -661,6 +661,26 @@ function parseTime(text) {
   const rawText = String(text || '').trim();
   const normalized = normalizeText(rawText);
   const cleaned = normalized.replace(/^(?:в|во|к|на)\s+/u, '');
+  const wordHourMap = {
+    'час': 1, 'часу': 1, 'часа': 1,
+    'два': 2, 'двух': 2, 'двум': 2,
+    'три': 3, 'трех': 3, 'трёх': 3,
+    'четыре': 4, 'четырех': 4, 'четырёх': 4,
+    'пять': 5, 'пяти': 5,
+    'шесть': 6, 'шести': 6,
+    'семь': 7, 'семи': 7,
+    'восемь': 8, 'восьми': 8,
+    'девять': 9, 'девяти': 9,
+    'десять': 10, 'десяти': 10,
+    'одиннадцать': 11, 'одиннадцати': 11,
+    'двенадцать': 12, 'двенадцати': 12
+  };
+
+  const wordTimeMatch = cleaned.match(/^([a-zа-я]+)(?:\s*(утра|дня|вечера|ночи))?$/u);
+  if (wordTimeMatch && wordHourMap[wordTimeMatch[1]]) {
+    const hour = wordHourMap[wordTimeMatch[1]];
+    return parseTime(`${hour}${wordTimeMatch[2] ? ` ${wordTimeMatch[2]}` : ''}`);
+  }
 
   if (cleaned === 'сейчас') {
     const now = getCurrentDateTimeParts();
