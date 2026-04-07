@@ -521,9 +521,19 @@ function getCurrentTimeText() {
   }).format(new Date());
 }
 
+function isValidName(text) {
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 2) return false;
+  if (/^\d+$/u.test(trimmed)) return false;
+  return true;
+}
+
 function isValidPhone(text) {
-  const digits = String(text || '').replace(/\D/g, '');
-  return digits.length >= 10 && digits.length <= 12;
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!/^\+?\d+$/u.test(trimmed)) return false;
+  return /^(?:\+7|8|7)707\d{7}$/u.test(trimmed);
 }
 
 function normalizePhone(text) {
@@ -2146,8 +2156,8 @@ async function handleOrderFlow(chatId, text, session) {
       return;
 
     case 'delivery_name':
-      if (text.trim().length < 2) {
-        await bot.sendMessage(chatId, 'Пожалуйста, укажите имя не короче 2 символов.');
+      if (!isValidName(text)) {
+        await bot.sendMessage(chatId, 'Введите корректное имя');
         return;
       }
       data.name = text.trim();
@@ -2157,7 +2167,7 @@ async function handleOrderFlow(chatId, text, session) {
 
     case 'delivery_phone':
       if (!isValidPhone(text)) {
-        await bot.sendMessage(chatId, 'Пожалуйста, укажите корректный номер телефона.');
+        await bot.sendMessage(chatId, 'Введите корректный номер телефона');
         return;
       }
       data.phone = normalizePhone(text);
@@ -2237,8 +2247,8 @@ async function handleBookingFlow(chatId, text, session) {
 
   switch (session.step) {
     case 'name':
-      if (text.trim().length < 2) {
-        await bot.sendMessage(chatId, 'Пожалуйста, укажите имя не короче 2 символов.');
+      if (!isValidName(text)) {
+        await bot.sendMessage(chatId, 'Введите корректное имя');
         return;
       }
       data.name = text.trim();
@@ -2248,7 +2258,7 @@ async function handleBookingFlow(chatId, text, session) {
 
     case 'phone':
       if (!isValidPhone(text)) {
-        await bot.sendMessage(chatId, 'Пожалуйста, укажите корректный номер телефона.');
+        await bot.sendMessage(chatId, 'Введите корректный номер телефона');
         return;
       }
       data.phone = normalizePhone(text);
