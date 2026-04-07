@@ -1424,6 +1424,11 @@ async function chooseAvailableTable(guests, date, time) {
 }
 
 async function saveOrder(data) {
+  const commentWithPayment = [
+    data.comment || 'нет',
+    data.paymentMethod ? `Оплата: ${data.paymentMethod}` : null
+  ].filter(Boolean).join(' | ');
+
   const payload = {
     type: 'order',
     client_name: data.name,
@@ -1436,11 +1441,28 @@ async function saveOrder(data) {
     order_items: data.orderItems.map((item) => `${item.quantity} x ${item.name}`).join(', '),
     payment_method: data.paymentMethod || 'не выбрана',
     time: data.deliveryTime,
-    comment: data.comment || 'нет'
+    comment: commentWithPayment
   };
 
   const { error } = await supabase.from('bookings_cafe').insert(payload);
-  if (error) throw new Error(`Failed to save order: ${error.message}`);
+  if (!error) return;
+
+  const missingPaymentColumn =
+    error.code === 'PGRST204' ||
+    /payment_method/i.test(error.message || '') ||
+    /column .*payment_method/i.test(error.details || '');
+
+  if (!missingPaymentColumn) {
+    throw new Error(`Failed to save order: ${error.message}`);
+  }
+
+  const fallbackPayload = { ...payload };
+  delete fallbackPayload.payment_method;
+
+  const { error: fallbackError } = await supabase.from('bookings_cafe').insert(fallbackPayload);
+  if (fallbackError) {
+    throw new Error(`Failed to save order: ${fallbackError.message}`);
+  }
 }
 
 async function saveBooking(data) {
