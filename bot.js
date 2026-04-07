@@ -9,8 +9,8 @@ const OPENAI_KEY = process.env.OPENAI_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const MENU_PHOTO_ID = process.env.MENU_PHOTO_ID;
-const MANAGER_ID = Number(process.env.MANAGER_ID || 7217238312);
-const MY_ID = Number(process.env.MY_ID || 979390128);
+const MANAGER_ID = 979390128;
+const MY_ID = 979390128;
 const TIME_ZONE = 'Asia/Almaty';
 const MIN_ORDER_TOTAL = 4000;
 const CONTACT_MANAGER_TEXT = '👨‍💼 Связаться с менеджером';
@@ -23,6 +23,7 @@ const CASH_PAYMENT_TEXT = 'Оплата наличными при получен
 const CARD_PAYMENT_TEXT = 'Оплата картой/Kaspi QR';
 const CURRENT_ORDER_TEXT = '🧾 Мой заказ';
 const CREATOR_TEXT = 'Кто твой создатель?';
+const NONSENSE_REPLY = 'Нормально сформулируйте запрос: напишите блюдо, вопрос по меню или воспользуйтесь кнопками ниже.';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -354,6 +355,17 @@ function suggestMenuItems(alias, limit = 3) {
     .map((entry) => entry.item.name);
 }
 
+function isRudeOrNonsenseText(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  const rudeMarkers = [
+    'хуй', 'хер', 'хуйня', 'пизд', 'еб', 'бля', 'бляд', 'сука', 'нах', 'сперма'
+  ];
+
+  return rudeMarkers.some((marker) => normalized.includes(marker));
+}
+
 function formatMoney(amount) {
   return `${Number(amount || 0).toLocaleString('ru-RU')} тг`;
 }
@@ -648,10 +660,29 @@ function findSuggestedMenuItem(text) {
   const normalized = normalizeText(text);
   if (!normalized || normalized.length < 4) return null;
 
-  const suggestions = suggestMenuItems(text, 1);
-  if (suggestions.length === 0) return null;
+  const queryTokens = normalized.split(' ').filter((token) => token.length >= 3);
+  const ranked = MENU_ITEMS.map((item) => {
+    const candidates = buildSearchCandidates(item).map(normalizeText);
+    const tokenOverlap = Math.max(
+      ...candidates.map((candidate) => queryTokens.filter((token) => candidate.includes(token)).length),
+      0
+    );
+    const distance = Math.min(...candidates.map((candidate) => levenshteinDistance(normalized, candidate)));
 
-  return MENU_ITEMS.find((item) => item.name === suggestions[0]) || null;
+    return { item, tokenOverlap, distance };
+  }).sort((left, right) => {
+    if (left.tokenOverlap !== right.tokenOverlap) return right.tokenOverlap - left.tokenOverlap;
+    return left.distance - right.distance;
+  });
+
+  const best = ranked[0];
+  if (!best) return null;
+
+  if (best.tokenOverlap > 0) {
+    return best.distance <= 6 ? best.item : null;
+  }
+
+  return queryTokens.length <= 1 && best.distance <= 2 ? best.item : null;
 }
 
 function extractMenuItemFromText(text) {
@@ -1198,6 +1229,10 @@ function detectSelectionIntent(text, session, mode = 'order') {
   }
 
   if (!looksLikeOrderInput(text)) {
+    if (isRudeOrNonsenseText(text)) {
+      return { type: 'nonsense' };
+    }
+
     const suggestedItem = findSuggestedMenuItem(text);
     if (suggestedItem) {
       return { type: 'suggest_item', item: suggestedItem };
@@ -1351,6 +1386,12 @@ async function handleSelectionIntent(chatId, text, session, mode = 'order') {
       return;
     }
 
+    case 'nonsense': {
+      await bot.sendMessage(chatId, NONSENSE_REPLY, keyboard);
+      pushHistoryEntry(session, 'assistant', NONSENSE_REPLY);
+      return;
+    }
+
     case 'parse_error': {
       const parsed = intent.parsed;
       if (parsed.unknown.length > 0) {
@@ -1492,7 +1533,7 @@ async function saveBooking(data) {
 }
 
 async function notifyManagers(text) {
-  const targets = [MANAGER_ID, MY_ID].filter(Boolean);
+  const targets = [...new Set([MANAGER_ID].filter(Boolean))];
   await Promise.allSettled(targets.map((id) => bot.sendMessage(id, text)));
 }
 
