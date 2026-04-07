@@ -22,6 +22,7 @@ const SKIP_PREORDER_TEXT = '🚫 Без предзаказа';
 const CASH_PAYMENT_TEXT = 'Оплата наличными при получении';
 const CARD_PAYMENT_TEXT = 'Оплата картой/Kaspi QR';
 const CURRENT_ORDER_TEXT = '🧾 Мой заказ';
+const CREATOR_TEXT = 'Кто твой создатель?';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -108,6 +109,7 @@ const MENU_ITEMS = [
 const MAIN_KEYBOARD_ROWS = [
   [{ text: '🍕 Заказать еду' }, { text: '🪑 Забронировать стол' }],
   [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
+  [{ text: CREATOR_TEXT }],
   [{ text: CONTACT_MANAGER_TEXT }]
 ];
 
@@ -544,7 +546,11 @@ function looksLikeOrderInput(text) {
 
 function isDoneOrderingText(text) {
   const normalized = normalizeText(text);
-  return ['все', 'всё', 'готово', 'это все', 'это всё', 'хватит', normalizeText(FINISH_SELECTION_TEXT)].includes(normalized);
+  if (['все', 'всё', 'готово', 'это все', 'это всё', 'хватит', normalizeText(FINISH_SELECTION_TEXT)].includes(normalized)) {
+    return true;
+  }
+
+  return /^(?:ну\s+)?(?:да\s+)?(?:все|всё)(?:\s+хватит|\s+достаточно|\s+готово)?$/u.test(normalized);
 }
 
 function isConfirmationText(text) {
@@ -1155,6 +1161,10 @@ function detectSelectionIntent(text, session, mode = 'order') {
   const isPreorder = mode === 'preorder';
   const normalized = normalizeText(text);
 
+  if (isDoneOrderingText(text)) {
+    return { type: 'finish' };
+  }
+
   if (data.pendingSuggestedItem && isConfirmationText(text)) {
     return { type: 'confirm_suggested_item', itemName: data.pendingSuggestedItem };
   }
@@ -1181,10 +1191,6 @@ function detectSelectionIntent(text, session, mode = 'order') {
 
   if (isRecommendationRequest(text)) {
     return { type: 'recommend' };
-  }
-
-  if (isDoneOrderingText(text)) {
-    return { type: 'finish' };
   }
 
   if (isPreorder && (normalized === 'нет' || text === SKIP_PREORDER_TEXT) && (!data.preorderItems || data.preorderItems.length === 0)) {
@@ -1876,6 +1882,15 @@ bot.on('message', async (msg) => {
         `• подсказать по меню\n\n` +
         `Заказы на доставку принимаются с 08:00 до 02:00 по Алматы.\n` +
         `Сейчас в ресторане: ${getCurrentTimeText()}`,
+        mainKeyboard
+      );
+      return;
+    }
+
+    if (text === CREATOR_TEXT) {
+      await bot.sendMessage(
+        chatId,
+        'Мой создатель-великий человек Нурали и мой юзернейм @bmfqq',
         mainKeyboard
       );
       return;
