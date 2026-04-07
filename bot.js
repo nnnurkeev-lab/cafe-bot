@@ -413,33 +413,112 @@ function isPositiveInteger(text) {
   return /^[1-9]\d*$/.test(String(text || '').trim());
 }
 
-function parseDate(text) {
-  const match = String(text || '').trim().match(/^(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?$/);
-  if (!match) return null;
+function formatParsedDateValue(day, month, year) {
+  return `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.${year}`;
+}
 
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  let year = match[3] ? Number(match[3]) : Number(new Intl.DateTimeFormat('en-CA', {
-    timeZone: TIME_ZONE,
-    year: 'numeric'
-  }).format(new Date()));
-
-  if (year < 100) year += 2000;
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+function buildParsedDate(day, month, year) {
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    return null;
+  }
 
   return {
     day,
     month,
     year,
-    value: `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.${year}`
+    value: formatParsedDateValue(day, month, year)
   };
+}
+
+function buildRelativeDate(offsetDays) {
+  const now = getCurrentDateTimeParts();
+  const base = new Date(Date.UTC(now.year, now.month - 1, now.day));
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return buildParsedDate(base.getUTCDate(), base.getUTCMonth() + 1, base.getUTCFullYear());
+}
+
+function parseDate(text) {
+  const rawText = String(text || '').trim();
+  const normalized = normalizeText(rawText).replace(/^(?:на|в|во)\s+/u, '');
+  const currentYear = Number(new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE,
+    year: 'numeric'
+  }).format(new Date()));
+
+  if (normalized === 'сегодня') return buildRelativeDate(0);
+  if (normalized === 'завтра') return buildRelativeDate(1);
+  if (normalized === 'послезавтра') return buildRelativeDate(2);
+
+  const weekdayMap = {
+    'воскресенье': 0,
+    'понедельник': 1,
+    'вторник': 2,
+    'среда': 3,
+    'среду': 3,
+    'четверг': 4,
+    'пятница': 5,
+    'пятницу': 5,
+    'суббота': 6
+  };
+
+  if (Object.prototype.hasOwnProperty.call(weekdayMap, normalized)) {
+    const now = getCurrentDateTimeParts();
+    const base = new Date(Date.UTC(now.year, now.month - 1, now.day));
+    const currentWeekday = base.getUTCDay();
+    let offset = (weekdayMap[normalized] - currentWeekday + 7) % 7;
+    if (offset === 0) offset = 7;
+    return buildRelativeDate(offset);
+  }
+
+  const namedMonthMap = {
+    'января': 1, 'январь': 1, 'янв': 1,
+    'февраля': 2, 'февраль': 2, 'фев': 2,
+    'марта': 3, 'март': 3, 'мар': 3,
+    'апреля': 4, 'апрель': 4, 'апр': 4,
+    'мая': 5, 'май': 5,
+    'июня': 6, 'июнь': 6, 'июн': 6,
+    'июля': 7, 'июль': 7, 'июл': 7,
+    'августа': 8, 'август': 8, 'авг': 8,
+    'сентября': 9, 'сентябрь': 9, 'сен': 9,
+    'октября': 10, 'октябрь': 10, 'окт': 10,
+    'ноября': 11, 'ноябрь': 11, 'ноя': 11,
+    'декабря': 12, 'декабрь': 12, 'дек': 12
+  };
+
+  const namedMonthMatch = normalized.match(/^(\d{1,2})\s+([a-zа-я]+)(?:\s+(\d{2,4}))?$/u);
+  if (namedMonthMatch) {
+    const day = Number(namedMonthMatch[1]);
+    const month = namedMonthMap[namedMonthMatch[2]];
+    let year = namedMonthMatch[3] ? Number(namedMonthMatch[3]) : currentYear;
+
+    if (month) {
+      if (year < 100) year += 2000;
+      return buildParsedDate(day, month, year);
+    }
+  }
+
+  const match = rawText.match(/^(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  let year = match[3] ? Number(match[3]) : currentYear;
+
+  if (year < 100) year += 2000;
+  return buildParsedDate(day, month, year);
 }
 
 function parseTime(text) {
   const rawText = String(text || '').trim();
   const normalized = normalizeText(rawText);
+  const cleaned = normalized.replace(/^(?:в|во|к|на)\s+/u, '');
 
-  if (normalized === 'сейчас') {
+  if (cleaned === 'сейчас') {
     const now = getCurrentDateTimeParts();
     return {
       hours: now.hour,
@@ -448,15 +527,15 @@ function parseTime(text) {
     };
   }
 
-  if (normalized === 'полдень') {
+  if (cleaned === 'полдень') {
     return { hours: 12, minutes: 0, value: '12:00' };
   }
 
-  if (normalized === 'полночь') {
+  if (cleaned === 'полночь') {
     return { hours: 0, minutes: 0, value: '00:00' };
   }
 
-  const relativeHourMatch = normalized.match(/^через\s+(\d+)\s*(час|часа|часов)$/u);
+  const relativeHourMatch = cleaned.match(/^через\s+(\d+)\s*(час|часа|часов)$/u);
   if (relativeHourMatch) {
     const addHours = Number(relativeHourMatch[1]);
     const now = getCurrentDateTimeParts();
@@ -470,7 +549,7 @@ function parseTime(text) {
     };
   }
 
-  const relativeMinuteMatch = normalized.match(/^через\s+(\d+)\s*(минут|минута|минуты)$/u);
+  const relativeMinuteMatch = cleaned.match(/^через\s+(\d+)\s*(минут|минута|минуты)$/u);
   if (relativeMinuteMatch) {
     const addMinutes = Number(relativeMinuteMatch[1]);
     const now = getCurrentDateTimeParts();
@@ -484,8 +563,8 @@ function parseTime(text) {
     };
   }
 
-  const naturalMatch = normalized.match(/^(\d{1,2})(?::(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u)
-    || normalized.match(/^(\d{1,2})\s*(?:час|часа|часов)(?::(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u);
+  const naturalMatch = cleaned.match(/^(\d{1,2})(?:(?::|\.|\s)(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u)
+    || cleaned.match(/^(\d{1,2})\s*(?:час|часа|часов)(?:(?::|\.|\s)(\d{2}))?(?:\s*(утра|дня|вечера|ночи))?$/u);
 
   if (naturalMatch) {
     let hours = Number(naturalMatch[1]);
@@ -533,6 +612,67 @@ function parseTime(text) {
     hours,
     minutes,
     value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+  };
+}
+
+function extractDateCandidate(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return '';
+
+  const directDate = parseDate(normalized);
+  if (directDate) return normalized;
+
+  const patterns = [
+    /\bсегодня\b/u,
+    /\bзавтра\b/u,
+    /\bпослезавтра\b/u,
+    /\b(?:в\s+)?(?:понедельник|вторник|среда|среду|четверг|пятница|пятницу|суббота|воскресенье)\b/u,
+    /\b\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?\b/u,
+    /\b\d{1,2}\s+(?:января|январь|янв|февраля|февраль|фев|марта|март|мар|апреля|апрель|апр|мая|май|июня|июнь|июн|июля|июль|июл|августа|август|авг|сентября|сентябрь|сен|октября|октябрь|окт|ноября|ноябрь|ноя|декабря|декабрь|дек)(?:\s+\d{2,4})?\b/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match) return match[0];
+  }
+
+  return '';
+}
+
+function extractTimeCandidate(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return '';
+
+  const directTime = parseTime(normalized);
+  if (directTime) return normalized;
+
+  const patterns = [
+    /\bчерез\s+\d+\s*(?:час|часа|часов|минут|минута|минуты)\b/u,
+    /\b(?:сейчас|полдень|полночь)\b/u,
+    /\b\d{1,2}(?::|\.)\d{2}(?:\s*(?:утра|дня|вечера|ночи))?\b/u,
+    /\b\d{1,2}\s*(?:час|часа|часов)(?:(?::|\.|\s)\d{2})?(?:\s*(?:утра|дня|вечера|ночи))?\b/u,
+    /\b\d{1,2}\s*(?:утра|дня|вечера|ночи)\b/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match) return match[0];
+  }
+
+  return '';
+}
+
+function parseBookingDateTime(text) {
+  const dateCandidate = extractDateCandidate(text);
+  const timeCandidate = extractTimeCandidate(text);
+  const parsedDate = dateCandidate ? parseDate(dateCandidate) : null;
+  const parsedTime = timeCandidate ? parseTime(timeCandidate) : null;
+
+  return {
+    parsedDate,
+    parsedTime,
+    hasDate: Boolean(parsedDate),
+    hasTime: Boolean(parsedTime)
   };
 }
 
@@ -1352,7 +1492,7 @@ async function handleSelectionIntent(chatId, text, session, mode = 'order') {
       }
 
       nextOrderStep(session, 'delivery_details');
-      const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nЕсли чего-то нет, напишите "нет".`;
+      const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nВремя можно указать по-человечески: например, "15:00", "к 3 дня", "8 вечера" или "через час". Если чего-то нет, напишите "нет".`;
       await bot.sendMessage(chatId, reply);
       pushHistoryEntry(session, 'assistant', reply);
       return;
@@ -1801,28 +1941,29 @@ async function handleBookingFlow(chatId, text, session) {
         return;
       }
       data.phone = normalizePhone(text);
-      nextBookingStep(session, 'date', withFood);
-      await bot.sendMessage(chatId, 'Укажите дату в формате ДД.ММ или ДД.ММ.ГГГГ.');
+      nextBookingStep(session, 'date_time', withFood);
+      await bot.sendMessage(chatId, 'Когда и на какое время вы хотите забронировать стол? Например: "сегодня в 15:30", "завтра к 3 дня", "7 апреля в 8 вечера".');
       return;
 
-    case 'date': {
-      const parsedDate = parseDate(text);
-      if (!parsedDate) {
-        await bot.sendMessage(chatId, 'Не удалось распознать дату. Используйте формат ДД.ММ или ДД.ММ.ГГГГ.');
+    case 'date_time': {
+      const { parsedDate, parsedTime, hasDate, hasTime } = parseBookingDateTime(text);
+
+      if (!hasDate && !hasTime) {
+        await bot.sendMessage(chatId, 'Не удалось распознать ни дату, ни время. Напишите одним сообщением, например: "сегодня в 15:30", "завтра к 3 дня" или "в пятницу в 8 вечера".');
         return;
       }
+
+      if (!hasDate) {
+        await bot.sendMessage(chatId, 'Не удалось распознать дату. Напишите одним сообщением дату и время, например: "сегодня в 15:30", "завтра к 3 дня" или "7 апреля в 8 вечера".');
+        return;
+      }
+
+      if (!hasTime || !isBookingTimeAllowed(parsedTime)) {
+        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время. Бронь принимается с 08:00 до 02:00. Напишите одним сообщением, например: "сегодня в 15:30", "завтра к 3 дня" или "7 апреля в 8 вечера".');
+        return;
+      }
+
       data.date = parsedDate.value;
-      nextBookingStep(session, 'time', withFood);
-      await bot.sendMessage(chatId, 'Укажите время в формате ЧЧ:ММ.');
-      return;
-    }
-
-    case 'time': {
-      const parsedTime = parseTime(text);
-      if (!parsedTime || !isBookingTimeAllowed(parsedTime)) {
-        await bot.sendMessage(chatId, 'Бронь принимается в часы работы: с 08:00 до 02:00. Можно указать время как "15:00", "3 дня", "8 утра" или "через час".');
-        return;
-      }
       data.time = parsedTime.value;
       nextBookingStep(session, 'guests', withFood);
       await bot.sendMessage(chatId, 'Укажите количество гостей.');
