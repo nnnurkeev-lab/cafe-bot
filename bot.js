@@ -533,7 +533,7 @@ function isValidPhone(text) {
   if (typeof text !== 'string') return false;
   const trimmed = text.trim();
   if (!/^\+?\d+$/u.test(trimmed)) return false;
-  return /^(?:\+7|8|7)707\d{7}$/u.test(trimmed);
+  return /^(?:\+7|8|7)\d{10}$/u.test(trimmed);
 }
 
 function normalizePhone(text) {
