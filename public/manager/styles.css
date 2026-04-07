@@ -1,0 +1,341 @@
+:root {
+  color-scheme: light;
+  --bg: #f3ede2;
+  --surface: rgba(255, 249, 239, 0.92);
+  --surface-strong: #fffdf7;
+  --ink: #1f2933;
+  --muted: #5e6b75;
+  --line: rgba(102, 88, 64, 0.14);
+  --accent: #c65d2e;
+  --accent-soft: rgba(198, 93, 46, 0.12);
+  --pending: #e7a63a;
+  --cooking: #d66d2f;
+  --ready: #2f8f5b;
+  --courier: #2f6fb2;
+  --done: #6f7b85;
+  --shadow: 0 18px 40px rgba(76, 56, 34, 0.12);
+  font-family: "SF Pro Display", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(255, 219, 175, 0.8), transparent 28%),
+    radial-gradient(circle at top right, rgba(212, 98, 56, 0.18), transparent 22%),
+    linear-gradient(160deg, #f4ead8 0%, #f3ede2 45%, #efe7d6 100%);
+}
+
+.app-shell {
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+h1, h2, h3, p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(28px, 4vw, 44px);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.last-updated {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.ghost-button,
+.login-form button,
+.action-button {
+  border: none;
+  border-radius: 16px;
+  padding: 12px 16px;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.16s ease, opacity 0.16s ease, background-color 0.16s ease;
+}
+
+.ghost-button {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.ghost-button:hover,
+.login-form button:hover,
+.action-button:hover {
+  transform: translateY(-1px);
+}
+
+.login-card,
+.archive-panel,
+.column {
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+}
+
+.login-card {
+  max-width: 540px;
+  margin: 8vh auto 0;
+  padding: 28px;
+}
+
+.login-card p {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.login-form {
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.login-form input {
+  flex: 1 1 240px;
+  min-height: 48px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  padding: 0 14px;
+  font: inherit;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.login-form button {
+  background: var(--accent);
+  color: #fff;
+  min-width: 140px;
+}
+
+.error-text {
+  color: #af2b2b;
+  margin-top: 12px;
+}
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.column,
+.archive-panel {
+  padding: 18px;
+}
+
+.archive-panel {
+  margin-top: 18px;
+}
+
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.count-badge {
+  min-width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31, 41, 51, 0.08);
+  font-weight: 700;
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 120px;
+}
+
+.archive-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.order-card {
+  background: var(--surface-strong);
+  border: 1px solid rgba(114, 90, 56, 0.12);
+  border-radius: 22px;
+  padding: 16px;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.order-code {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.customer-name {
+  font-size: 20px;
+}
+
+.status-pill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.meta-grid,
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.meta-grid {
+  margin-bottom: 14px;
+}
+
+.meta-grid-wide {
+  grid-column: 1 / -1;
+}
+
+.label {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.items-block,
+.comment-block,
+.eta-block,
+.summary-row {
+  margin-bottom: 14px;
+}
+
+.items-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.items-list li + li {
+  margin-top: 6px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-button {
+  color: #fff;
+  font-weight: 700;
+}
+
+.action-button.pending { background: var(--pending); }
+.action-button.cooking { background: var(--cooking); }
+.action-button.ready { background: var(--ready); }
+.action-button.courier { background: var(--courier); }
+.action-button.done { background: var(--done); }
+
+.pending-column .count-badge,
+.status-pill.pending { background: var(--pending); }
+
+.cooking-column .count-badge,
+.status-pill.cooking { background: var(--cooking); }
+
+.ready-column .count-badge,
+.status-pill.ready { background: var(--ready); }
+
+.courier-column .count-badge,
+.status-pill.courier { background: var(--courier); }
+
+.archive-panel .count-badge,
+.status-pill.done { background: var(--done); }
+
+.empty-state {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px dashed rgba(94, 107, 117, 0.35);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.4);
+  text-align: center;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 1180px) {
+  .board-grid {
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .topbar {
+    flex-direction: column;
+  }
+
+  .board-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .login-form {
+    flex-direction: column;
+  }
+
+  .login-form button {
+    width: 100%;
+  }
+}

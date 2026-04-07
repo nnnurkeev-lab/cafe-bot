@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
 const TelegramBot = require('node-telegram-bot-api');
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
@@ -9,8 +12,10 @@ const OPENAI_KEY = process.env.OPENAI_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const MENU_PHOTO_ID = process.env.MENU_PHOTO_ID;
-const MANAGER_ID = 979390128;
-const MY_ID = 979390128;
+const MANAGER_ID = Number(process.env.MANAGER_ID || 979390128);
+const MY_ID = Number(process.env.MY_ID || 979390128);
+const MANAGER_WEB_PASSWORD = process.env.MANAGER_WEB_PASSWORD || '';
+const PORT = Number(process.env.PORT || 3000);
 const TIME_ZONE = 'Asia/Almaty';
 const MIN_ORDER_TOTAL = 4000;
 const CONTACT_MANAGER_TEXT = '👨‍💼 Связаться с менеджером';
@@ -38,6 +43,7 @@ const sessions = new Map();
 const ordersByCode = new Map();
 const orderCodesByChat = new Map();
 const pendingEtaByManager = new Map();
+const managerPanelDir = path.join(__dirname, 'public', 'manager');
 
 const TABLES = [
   { id: 1, seats: 2 },
@@ -392,12 +398,26 @@ function getOrderStatusLabel(status) {
   const labels = {
     confirmed: 'принят',
     cooking: 'готовится',
+    ready: 'готов',
     courier_assigned: 'передан курьеру',
     delivered: 'доставлен',
     cancelled: 'отменён'
   };
 
   return labels[status] || 'обрабатывается';
+}
+
+function getManagerStatusColumn(status) {
+  const columns = {
+    confirmed: 'pending',
+    cooking: 'cooking',
+    ready: 'ready',
+    courier_assigned: 'courier',
+    delivered: 'done',
+    cancelled: 'done'
+  };
+
+  return columns[status] || 'pending';
 }
 
 function getCurrentStatusTimestamp() {
@@ -422,7 +442,7 @@ function rememberOrder(order) {
 
 function getLatestOrderForChat(chatId) {
   const codes = orderCodesByChat.get(chatId) || [];
-  const activeStatuses = ['confirmed', 'cooking', 'courier_assigned'];
+  const activeStatuses = ['confirmed', 'cooking', 'ready', 'courier_assigned'];
 
   for (let index = codes.length - 1; index >= 0; index -= 1) {
     const order = ordersByCode.get(codes[index]);
@@ -452,9 +472,10 @@ function buildManagerOrderStatusKeyboard(orderCode) {
   return createInlineKeyboard([
     [
       { text: 'Готовится', callback_data: `order_status:${orderCode}:cooking` },
-      { text: 'Передан курьеру', callback_data: `order_status:${orderCode}:courier` }
+      { text: 'Готов', callback_data: `order_status:${orderCode}:ready` }
     ],
     [
+      { text: 'Передан курьеру', callback_data: `order_status:${orderCode}:courier` },
       { text: 'Доставлен', callback_data: `order_status:${orderCode}:delivered` }
     ]
   ]);
@@ -502,6 +523,133 @@ function buildManagerOrderMessage(order) {
     `💬 Комментарий: ${order.comment || 'нет'}\n` +
     `📌 Статус: ${getOrderStatusLabel(order.status)}`
   );
+}
+
+function parseStoredOrderItems(value) {
+  if (!value) return [];
+
+  return String(value)
+    .split(/\s*,\s*/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const match = entry.match(/^(\d+)\s*x\s+(.+)$/iu);
+      if (!match) {
+        return { quantity: 1, name: entry };
+      }
+
+      return {
+        quantity: Number(match[1]) || 1,
+        name: match[2].trim()
+      };
+    });
+}
+
+function extractCommentText(comment) {
+  if (!comment) return 'нет';
+  const raw = String(comment);
+  const [commentPart] = raw.split(' | Оплата:');
+  return commentPart?.trim() || 'нет';
+}
+
+function hydrateOrderFromRow(row) {
+  if (!row || row.type !== 'order' || !row.order_code) return null;
+
+  const order = {
+    databaseId: row.id || null,
+    orderCode: row.order_code,
+    chatId: row.customer_chat_id ? Number(row.customer_chat_id) : null,
+    name: row.client_name || 'Клиент',
+    phone: row.phone || 'не указан',
+    address: row.delivery_address || 'не указан',
+    entrance: row.entrance || 'нет',
+    floor: row.floor || 'нет',
+    apartment: row.apartment || 'нет',
+    intercom: row.intercom || 'нет',
+    orderItems: parseStoredOrderItems(row.order_items),
+    total: 0,
+    paymentMethod: row.payment_method || 'не указана',
+    deliveryTime: row.time || 'как можно скорее',
+    comment: extractCommentText(row.comment),
+    status: row.status || 'confirmed',
+    statusComment: row.status_comment || null,
+    etaMinutes: typeof row.eta_minutes === 'number' ? row.eta_minutes : null,
+    history: []
+  };
+
+  order.total = calculateOrderTotal(order.orderItems);
+  return order;
+}
+
+function serializeOrderForManager(order) {
+  return {
+    databaseId: order.databaseId || null,
+    orderCode: order.orderCode,
+    chatId: order.chatId || null,
+    name: order.name,
+    phone: order.phone,
+    address: order.address,
+    entrance: order.entrance,
+    floor: order.floor,
+    apartment: order.apartment,
+    intercom: order.intercom,
+    orderItems: order.orderItems || [],
+    total: order.total || 0,
+    paymentMethod: order.paymentMethod || 'не указана',
+    deliveryTime: order.deliveryTime || 'как можно скорее',
+    comment: order.comment || 'нет',
+    status: order.status || 'confirmed',
+    statusLabel: getOrderStatusLabel(order.status),
+    column: getManagerStatusColumn(order.status),
+    etaMinutes: typeof order.etaMinutes === 'number' ? order.etaMinutes : null,
+    statusComment: order.statusComment || null,
+    history: order.history || []
+  };
+}
+
+async function fetchRecentOrdersFromDatabase(limit = 100) {
+  const { data, error } = await supabase
+    .from('bookings_cafe')
+    .select('*')
+    .eq('type', 'order')
+    .order('id', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(`Failed to load manager orders: ${error.message}`);
+  }
+
+  const orders = (data || [])
+    .map(hydrateOrderFromRow)
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftId = Number(left.databaseId || 0);
+      const rightId = Number(right.databaseId || 0);
+      return rightId - leftId;
+    });
+
+  orders.forEach(rememberOrder);
+  return orders;
+}
+
+async function getOrderByCode(orderCode) {
+  const cached = ordersByCode.get(orderCode);
+  if (cached) return cached;
+
+  const { data, error } = await supabase
+    .from('bookings_cafe')
+    .select('*')
+    .eq('type', 'order')
+    .eq('order_code', orderCode)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load order ${orderCode}: ${error.message}`);
+  }
+
+  const order = hydrateOrderFromRow(data);
+  if (order) rememberOrder(order);
+  return order;
 }
 
 function isWorkingHours() {
@@ -1899,7 +2047,7 @@ async function updateOrderStatusInDatabase(order) {
 }
 
 async function applyOrderStatus(orderCode, status, options = {}) {
-  const order = ordersByCode.get(orderCode);
+  const order = await getOrderByCode(orderCode);
   if (!order) return null;
 
   order.status = status;
@@ -1917,11 +2065,13 @@ async function applyOrderStatus(orderCode, status, options = {}) {
   rememberOrder(order);
 
   const etaText = order.etaMinutes ? ` Ориентировочно осталось ${order.etaMinutes} минут.` : '';
-  await bot.sendMessage(
-    order.chatId,
-    `Обновление по заказу №${order.orderCode}: сейчас он ${getOrderStatusLabel(order.status)}.${etaText}`,
-    mainKeyboard
-  );
+  if (order.chatId) {
+    await bot.sendMessage(
+      order.chatId,
+      `Обновление по заказу №${order.orderCode}: сейчас он ${getOrderStatusLabel(order.status)}.${etaText}`,
+      mainKeyboard
+    );
+  }
 
   return order;
 }
@@ -2387,6 +2537,239 @@ async function handleBookingFlow(chatId, text, session) {
   }
 }
 
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store'
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function sendText(res, statusCode, text, contentType = 'text/plain; charset=utf-8') {
+  res.writeHead(statusCode, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store'
+  });
+  res.end(text);
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+
+    req.on('data', (chunk) => {
+      raw += chunk;
+      if (raw.length > 1_000_000) {
+        reject(new Error('REQUEST_TOO_LARGE'));
+        req.destroy();
+      }
+    });
+
+    req.on('end', () => {
+      if (!raw) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(raw));
+      } catch (error) {
+        reject(new Error('INVALID_JSON'));
+      }
+    });
+
+    req.on('error', reject);
+  });
+}
+
+function isAuthorizedManagerRequest(req) {
+  if (!MANAGER_WEB_PASSWORD) return false;
+  const headerToken = String(req.headers['x-manager-password'] || '').trim();
+  const authHeader = String(req.headers.authorization || '').trim();
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  return headerToken === MANAGER_WEB_PASSWORD || bearerToken === MANAGER_WEB_PASSWORD;
+}
+
+function getManagerStaticFilePath(pathname) {
+  const requestedPath = pathname === '/manager' || pathname === '/manager/'
+    ? '/index.html'
+    : pathname.replace(/^\/manager/, '') || '/index.html';
+
+  const normalized = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+  const filePath = path.join(managerPanelDir, normalized);
+
+  if (!filePath.startsWith(managerPanelDir)) return null;
+  return filePath;
+}
+
+function getContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const contentTypes = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.ico': 'image/x-icon'
+  };
+
+  return contentTypes[ext] || 'application/octet-stream';
+}
+
+async function handleManagerApi(req, res, pathname) {
+  if (pathname === '/api/manager/session' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    if (!MANAGER_WEB_PASSWORD) {
+      sendJson(res, 503, { error: 'MANAGER_WEB_PASSWORD is not configured on the server.' });
+      return true;
+    }
+
+    if (String(body.password || '') !== MANAGER_WEB_PASSWORD) {
+      sendJson(res, 401, { error: 'Неверный пароль.' });
+      return true;
+    }
+
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  if (!pathname.startsWith('/api/manager/')) {
+    return false;
+  }
+
+  if (!isAuthorizedManagerRequest(req)) {
+    sendJson(res, 401, { error: 'Требуется авторизация менеджера.' });
+    return true;
+  }
+
+  if (pathname === '/api/manager/orders' && req.method === 'GET') {
+    const orders = await fetchRecentOrdersFromDatabase();
+    sendJson(res, 200, {
+      orders: orders.map(serializeOrderForManager),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  const statusMatch = pathname.match(/^\/api\/manager\/orders\/([^/]+)\/status$/);
+  if (statusMatch && req.method === 'POST') {
+    const orderCode = decodeURIComponent(statusMatch[1]);
+    const body = await readJsonBody(req);
+    const nextStatus = String(body.status || '').trim();
+    const etaMinutes = body.etaMinutes == null ? null : Number(body.etaMinutes);
+
+    if (!['confirmed', 'cooking', 'ready', 'courier_assigned', 'delivered', 'cancelled'].includes(nextStatus)) {
+      sendJson(res, 400, { error: 'Неизвестный статус.' });
+      return true;
+    }
+
+    if (nextStatus === 'courier_assigned' && (!Number.isInteger(etaMinutes) || etaMinutes < 1 || etaMinutes > 300)) {
+      sendJson(res, 400, { error: 'Для передачи курьеру укажите ETA в минутах от 1 до 300.' });
+      return true;
+    }
+
+    const statusComments = {
+      confirmed: 'Заказ принят',
+      cooking: 'Заказ готовится',
+      ready: 'Заказ готов к выдаче',
+      courier_assigned: `Осталось около ${etaMinutes} мин.`,
+      delivered: 'Заказ доставлен',
+      cancelled: 'Заказ отменён'
+    };
+
+    const order = await applyOrderStatus(orderCode, nextStatus, {
+      etaMinutes: nextStatus === 'courier_assigned' ? etaMinutes : undefined,
+      comment: statusComments[nextStatus]
+    });
+
+    if (!order) {
+      sendJson(res, 404, { error: 'Заказ не найден.' });
+      return true;
+    }
+
+    sendJson(res, 200, { order: serializeOrderForManager(order) });
+    return true;
+  }
+
+  sendJson(res, 404, { error: 'Маршрут не найден.' });
+  return true;
+}
+
+async function handleManagerStatic(req, res, pathname) {
+  if (!pathname.startsWith('/manager')) return false;
+
+  const filePath = getManagerStaticFilePath(pathname);
+  if (!filePath) {
+    sendText(res, 403, 'Forbidden');
+    return true;
+  }
+
+  try {
+    const data = await fs.promises.readFile(filePath);
+    sendText(res, 200, data, getContentType(filePath));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      sendText(res, 404, 'Not found');
+      return true;
+    }
+
+    throw error;
+  }
+
+  return true;
+}
+
+function startManagerServer() {
+  const server = http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const pathname = url.pathname;
+
+      if (await handleManagerApi(req, res, pathname)) {
+        return;
+      }
+
+      if (await handleManagerStatic(req, res, pathname)) {
+        return;
+      }
+
+      if (pathname === '/') {
+        sendText(res, 200, 'Cafe bot is running. Manager panel: /manager');
+        return;
+      }
+
+      sendText(res, 404, 'Not found');
+    } catch (error) {
+      console.error('Manager web server error:', error);
+      if (!res.headersSent) {
+        const message = error.message === 'INVALID_JSON'
+          ? 'Некорректный JSON.'
+          : error.message === 'REQUEST_TOO_LARGE'
+            ? 'Слишком большой запрос.'
+            : 'Внутренняя ошибка сервера.';
+        sendJson(res, error.message === 'INVALID_JSON' ? 400 : 500, { error: message });
+      }
+    }
+  });
+
+  server.listen(PORT, () => {
+    console.log(`Manager panel is available on port ${PORT}`);
+  });
+
+  return server;
+}
+
+async function bootstrapManagerState() {
+  try {
+    await fetchRecentOrdersFromDatabase();
+  } catch (error) {
+    console.error('Failed to bootstrap manager orders:', error);
+  }
+}
+
 bot.onText(/\/start/, async (msg) => {
   const name = msg.from.first_name || 'Гость';
   const now = getCurrentDateTimeParts();
@@ -2412,7 +2795,7 @@ bot.on('callback_query', async (query) => {
     }
 
     const [, orderCode, action] = data.split(':');
-    const order = ordersByCode.get(orderCode);
+    const order = await getOrderByCode(orderCode);
 
     if (!order) {
       await bot.answerCallbackQuery(query.id, { text: 'Заказ не найден.' });
@@ -2423,6 +2806,13 @@ bot.on('callback_query', async (query) => {
       await applyOrderStatus(orderCode, 'cooking', { comment: 'Заказ готовится' });
       await bot.answerCallbackQuery(query.id, { text: `Заказ №${orderCode} переведён в статус "Готовится".` });
       await bot.sendMessage(managerChatId, `Статус заказа №${orderCode} обновлён: готовится.`);
+      return;
+    }
+
+    if (action === 'ready') {
+      await applyOrderStatus(orderCode, 'ready', { comment: 'Заказ готов к выдаче' });
+      await bot.answerCallbackQuery(query.id, { text: `Заказ №${orderCode} переведён в статус "Готов".` });
+      await bot.sendMessage(managerChatId, `Статус заказа №${orderCode} обновлён: готов.`);
       return;
     }
 
@@ -2691,5 +3081,8 @@ bot.on('message', async (msg) => {
     );
   }
 });
+
+bootstrapManagerState();
+startManagerServer();
 
 console.log('Надёжный бот для кафе запущен!');
