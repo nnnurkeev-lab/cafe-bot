@@ -809,8 +809,8 @@ function extractTimeCandidate(text) {
 function parseBookingDateTime(text) {
   const dateCandidate = extractDateCandidate(text);
   const timeCandidate = extractTimeCandidate(text);
-  const parsedDate = dateCandidate ? parseDate(dateCandidate) : null;
-  const parsedTime = timeCandidate ? parseTime(timeCandidate) : null;
+  const parsedDate = parseDate(text) || (dateCandidate ? parseDate(dateCandidate) : null);
+  const parsedTime = parseTime(text) || (timeCandidate ? parseTime(timeCandidate) : null);
 
   return {
     parsedDate,
@@ -2268,24 +2268,53 @@ async function handleBookingFlow(chatId, text, session) {
 
     case 'date_time': {
       const { parsedDate, parsedTime, hasDate, hasTime } = parseBookingDateTime(text);
+      const savedDate = data.pendingBookingDate ? parseDate(data.pendingBookingDate) : null;
+      const savedTime = data.pendingBookingTime ? parseTime(data.pendingBookingTime) : null;
+      const finalDate = parsedDate || savedDate;
+      const finalTime = parsedTime || savedTime;
+
+      if (parsedDate) {
+        data.pendingBookingDate = parsedDate.value;
+      }
+
+      if (parsedTime) {
+        data.pendingBookingTime = parsedTime.value;
+      }
 
       if (!hasDate && !hasTime) {
+        if (savedDate && !savedTime) {
+          await bot.sendMessage(chatId, `Дату уже запомнил: ${savedDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`);
+          return;
+        }
+
+        if (!savedDate && savedTime) {
+          await bot.sendMessage(chatId, `Время уже запомнил: ${savedTime.value}. Теперь напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".`);
+          return;
+        }
+
         await bot.sendMessage(chatId, 'Не удалось распознать ни дату, ни время. Напишите одним сообщением, например: "сегодня в 15:30", "завтра к 3 дня" или "в пятницу в 8 вечера".');
         return;
       }
 
-      if (!hasDate) {
-        await bot.sendMessage(chatId, 'Не удалось распознать дату. Напишите одним сообщением дату и время, например: "сегодня в 15:30", "завтра к 3 дня" или "7 апреля в 8 вечера".');
+      if (!finalDate) {
+        await bot.sendMessage(chatId, 'Не удалось распознать дату. Напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".');
         return;
       }
 
-      if (!hasTime || !isBookingTimeAllowed(parsedTime)) {
-        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время. Бронь принимается с 08:00 до 02:00. Напишите одним сообщением, например: "сегодня в 15:30", "завтра к 3 дня" или "7 апреля в 8 вечера".');
+      if (!finalTime) {
+        await bot.sendMessage(chatId, `Дату запомнил: ${finalDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`);
         return;
       }
 
-      data.date = parsedDate.value;
-      data.time = parsedTime.value;
+      if (!isBookingTimeAllowed(finalTime)) {
+        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время. Бронь принимается с 08:00 до 02:00. Напишите только время, например: "15:30", "к 4 дня" или "8 вечера".');
+        return;
+      }
+
+      data.date = finalDate.value;
+      data.time = finalTime.value;
+      data.pendingBookingDate = null;
+      data.pendingBookingTime = null;
       nextBookingStep(session, 'guests', withFood);
       await bot.sendMessage(chatId, 'Укажите количество гостей.');
       return;
