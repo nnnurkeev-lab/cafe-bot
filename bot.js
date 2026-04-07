@@ -1250,6 +1250,23 @@ function summarizeOrder(data) {
   );
 }
 
+function normalizeOptionalDeliveryField(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return 'нет';
+
+  const normalized = normalizeText(raw);
+  if (['нет', 'не', 'нету', 'не нужно', 'отсутствует'].includes(normalized)) {
+    return 'нет';
+  }
+
+  return raw;
+}
+
+async function startDeliveryDetailsFlow(chatId, session) {
+  nextOrderStep(session, 'delivery_name');
+  await bot.sendMessage(chatId, 'Укажите, пожалуйста, имя получателя.');
+}
+
 function summarizeCurrentCart(data) {
   if (!data.orderItems || data.orderItems.length === 0) {
     return 'Пока в заказе ничего нет. Напишите, что хотите добавить.';
@@ -1491,10 +1508,10 @@ async function handleSelectionIntent(chatId, text, session, mode = 'order') {
         return;
       }
 
-      nextOrderStep(session, 'delivery_details');
-      const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь отправьте одним сообщением данные для доставки, каждую строку с новой строки:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий\n\nВремя можно указать по-человечески: например, "15:00", "к 3 дня", "8 вечера" или "через час". Если чего-то нет, напишите "нет".`;
+      const reply = `Ваш заказ:\n${formatOrderItems(data.orderItems)}\n\nИтого: ${formatMoney(data.total)}.\n\nТеперь оформим доставку по шагам, чтобы ничего не потерялось.`;
       await bot.sendMessage(chatId, reply);
       pushHistoryEntry(session, 'assistant', reply);
+      await startDeliveryDetailsFlow(chatId, session);
       return;
     }
 
@@ -1875,37 +1892,78 @@ async function handleOrderFlow(chatId, text, session) {
       await handleSelectionIntent(chatId, text, session, 'order');
       return;
 
-    case 'delivery_details': {
-      const parsedDetails = parseDeliveryDetails(text);
-      if (parsedDetails.error === 'NOT_ENOUGH_FIELDS') {
-        await bot.sendMessage(
-          chatId,
-          'Не получилось разобрать все данные доставки. Можете отправить их одним сообщением в свободной форме или по строкам:\nИмя\nТелефон\nАдрес\nПодъезд\nЭтаж\nКвартира\nДомофон\nВремя доставки\nКомментарий'
-        );
+    case 'delivery_name':
+      if (text.trim().length < 2) {
+        await bot.sendMessage(chatId, 'Пожалуйста, укажите имя не короче 2 символов.');
         return;
       }
-      if (parsedDetails.error === 'INVALID_NAME') {
-        await bot.sendMessage(chatId, 'Не удалось распознать имя. Пожалуйста, отправьте все данные ещё раз одним сообщением.');
-        return;
-      }
-      if (parsedDetails.error === 'INVALID_PHONE') {
-        await bot.sendMessage(chatId, 'Номер телефона выглядит некорректно. Пожалуйста, отправьте все данные ещё раз одним сообщением.');
-        return;
-      }
-      if (parsedDetails.error === 'INVALID_ADDRESS') {
-        await bot.sendMessage(chatId, 'Адрес выглядит слишком коротким. Пожалуйста, отправьте все данные ещё раз одним сообщением.');
-        return;
-      }
-      if (parsedDetails.error === 'INVALID_TIME') {
-        await bot.sendMessage(chatId, 'Ресторан, к сожалению, принимает заказы только с 08:00 до 02:00. Можно указать время как "15:00", "3 дня", "8 утра" или "через час". Пожалуйста, отправьте данные ещё раз одним сообщением.');
-        return;
-      }
+      data.name = text.trim();
+      nextOrderStep(session, 'delivery_phone');
+      await bot.sendMessage(chatId, 'Укажите номер телефона получателя.');
+      return;
 
-      Object.assign(data, parsedDetails.data);
+    case 'delivery_phone':
+      if (!isValidPhone(text)) {
+        await bot.sendMessage(chatId, 'Пожалуйста, укажите корректный номер телефона.');
+        return;
+      }
+      data.phone = normalizePhone(text);
+      nextOrderStep(session, 'delivery_address');
+      await bot.sendMessage(chatId, 'Укажите адрес доставки.');
+      return;
+
+    case 'delivery_address':
+      if (text.trim().length < 5) {
+        await bot.sendMessage(chatId, 'Адрес выглядит слишком коротким. Пожалуйста, укажите адрес подробнее.');
+        return;
+      }
+      data.address = text.trim();
+      nextOrderStep(session, 'delivery_entrance');
+      await bot.sendMessage(chatId, 'Укажите подъезд. Если его нет, напишите "нет".');
+      return;
+
+    case 'delivery_entrance':
+      data.entrance = normalizeOptionalDeliveryField(text);
+      nextOrderStep(session, 'delivery_floor');
+      await bot.sendMessage(chatId, 'Укажите этаж. Если его нет, напишите "нет".');
+      return;
+
+    case 'delivery_floor':
+      data.floor = normalizeOptionalDeliveryField(text);
+      nextOrderStep(session, 'delivery_apartment');
+      await bot.sendMessage(chatId, 'Укажите квартиру. Если её нет, напишите "нет".');
+      return;
+
+    case 'delivery_apartment':
+      data.apartment = normalizeOptionalDeliveryField(text);
+      nextOrderStep(session, 'delivery_intercom');
+      await bot.sendMessage(chatId, 'Укажите домофон. Если его нет, напишите "нет".');
+      return;
+
+    case 'delivery_intercom':
+      data.intercom = normalizeOptionalDeliveryField(text);
+      nextOrderStep(session, 'delivery_time');
+      await bot.sendMessage(chatId, 'Когда привезти заказ? Можно написать, например: "15:00", "к 3 дня", "8 вечера" или "через час".');
+      return;
+
+    case 'delivery_time': {
+      const parsedTime = parseTime(text);
+      if (!parsedTime || !isBookingTimeAllowed(parsedTime)) {
+        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время доставки. Мы принимаем заказы с 08:00 до 02:00. Можно написать, например: "15:00", "к 3 дня", "8 вечера" или "через час".');
+        return;
+      }
+      data.deliveryTime = parsedTime.value;
+      nextOrderStep(session, 'delivery_comment');
+      await bot.sendMessage(chatId, 'Есть комментарий для курьера? Если нет, напишите "нет".');
+      return;
+    }
+
+    case 'delivery_comment':
+      data.comment = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'confirm');
       await bot.sendMessage(chatId, `${summarizeOrder(data)}\n\nЕсли всё верно, подтвердите заказ.`, confirmOrderKeyboard);
       return;
-    }
+    
 
     case 'payment':
       await bot.sendMessage(chatId, 'Выберите, пожалуйста, способ оплаты кнопками ниже.', paymentKeyboard);
