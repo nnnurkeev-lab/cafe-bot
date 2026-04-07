@@ -24,6 +24,8 @@ const CARD_PAYMENT_TEXT = 'Оплата картой/Kaspi QR';
 const CURRENT_ORDER_TEXT = '🧾 Мой заказ';
 const CREATOR_TEXT = 'Кто твой создатель?';
 const NONSENSE_REPLY = 'Нормально сформулируйте запрос: напишите блюдо, вопрос по меню или воспользуйтесь кнопками ниже.';
+const TRACK_ORDER_TEXT = '📦 Отследить заказ';
+const REPEAT_ORDER_TEXT = '🔁 Повторить заказ';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -33,6 +35,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
 
 const sessions = new Map();
+const ordersByCode = new Map();
+const orderCodesByChat = new Map();
+const pendingEtaByManager = new Map();
 
 const TABLES = [
   { id: 1, seats: 2 },
@@ -110,6 +115,7 @@ const MENU_ITEMS = [
 const MAIN_KEYBOARD_ROWS = [
   [{ text: '🍕 Заказать еду' }, { text: '🪑 Забронировать стол' }],
   [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
+  [{ text: TRACK_ORDER_TEXT }, { text: REPEAT_ORDER_TEXT }],
   [{ text: CREATOR_TEXT }],
   [{ text: CONTACT_MANAGER_TEXT }]
 ];
@@ -120,6 +126,14 @@ function createKeyboard(rows, isPersistent = false) {
       keyboard: rows,
       resize_keyboard: true,
       is_persistent: isPersistent
+    }
+  };
+}
+
+function createInlineKeyboard(rows) {
+  return {
+    reply_markup: {
+      inline_keyboard: rows
     }
   };
 }
@@ -368,6 +382,126 @@ function isRudeOrNonsenseText(text) {
 
 function formatMoney(amount) {
   return `${Number(amount || 0).toLocaleString('ru-RU')} тг`;
+}
+
+function generateOrderCode() {
+  return `ORD-${Date.now().toString(36).slice(-6).toUpperCase()}`;
+}
+
+function getOrderStatusLabel(status) {
+  const labels = {
+    confirmed: 'принят',
+    cooking: 'готовится',
+    courier_assigned: 'передан курьеру',
+    delivered: 'доставлен',
+    cancelled: 'отменён'
+  };
+
+  return labels[status] || 'обрабатывается';
+}
+
+function getCurrentStatusTimestamp() {
+  const now = getCurrentDateTimeParts();
+  return `${now.date} ${now.time}`;
+}
+
+function createOrderHistoryEntry(status, comment = '') {
+  return {
+    status,
+    comment,
+    at: getCurrentStatusTimestamp()
+  };
+}
+
+function rememberOrder(order) {
+  ordersByCode.set(order.orderCode, order);
+
+  const existingCodes = orderCodesByChat.get(order.chatId) || [];
+  orderCodesByChat.set(order.chatId, [...existingCodes.filter((code) => code !== order.orderCode), order.orderCode]);
+}
+
+function getLatestOrderForChat(chatId) {
+  const codes = orderCodesByChat.get(chatId) || [];
+  const activeStatuses = ['confirmed', 'cooking', 'courier_assigned'];
+
+  for (let index = codes.length - 1; index >= 0; index -= 1) {
+    const order = ordersByCode.get(codes[index]);
+    if (order && activeStatuses.includes(order.status)) {
+      return order;
+    }
+  }
+
+  for (let index = codes.length - 1; index >= 0; index -= 1) {
+    const order = ordersByCode.get(codes[index]);
+    if (order) return order;
+  }
+
+  return null;
+}
+
+function getLatestOrderForRepeat(chatId) {
+  const codes = orderCodesByChat.get(chatId) || [];
+  for (let index = codes.length - 1; index >= 0; index -= 1) {
+    const order = ordersByCode.get(codes[index]);
+    if (order) return order;
+  }
+  return null;
+}
+
+function buildManagerOrderStatusKeyboard(orderCode) {
+  return createInlineKeyboard([
+    [
+      { text: 'Готовится', callback_data: `order_status:${orderCode}:cooking` },
+      { text: 'Передан курьеру', callback_data: `order_status:${orderCode}:courier` }
+    ],
+    [
+      { text: 'Доставлен', callback_data: `order_status:${orderCode}:delivered` }
+    ]
+  ]);
+}
+
+function buildOrderTrackingText(order) {
+  if (!order) {
+    return 'Активных заказов пока не найдено.';
+  }
+
+  const historyText = (order.history || [])
+    .slice(-4)
+    .map((entry) => {
+      const suffix = entry.comment ? ` — ${entry.comment}` : '';
+      return `• ${entry.at}: ${getOrderStatusLabel(entry.status)}${suffix}`;
+    })
+    .join('\n');
+
+  const etaText = order.etaMinutes ? `\nОриентировочно осталось: ${order.etaMinutes} мин.` : '';
+
+  return (
+    `Заказ №${order.orderCode}\n` +
+    `Статус: ${getOrderStatusLabel(order.status)}${etaText}\n` +
+    `Сумма: ${formatMoney(order.total)}\n` +
+    `Время доставки: ${order.deliveryTime}\n\n` +
+    `История:\n${historyText || '• Заказ только что создан'}`
+  );
+}
+
+function buildManagerOrderMessage(order) {
+  return (
+    `🔔 Новый заказ №${order.orderCode}\n\n` +
+    `👤 Клиент: ${order.name}\n` +
+    `📞 Телефон: ${order.phone}\n` +
+    `🆔 Chat ID: ${order.chatId}\n` +
+    `📍 Адрес: ${order.address}\n` +
+    `🚪 Подъезд: ${order.entrance}\n` +
+    `🏢 Этаж: ${order.floor}\n` +
+    `🏠 Квартира: ${order.apartment}\n` +
+    `🔢 Домофон: ${order.intercom}\n` +
+    `🍽️ Позиции:\n${formatOrderItems(order.orderItems)}\n\n` +
+    `💰 Сумма: ${formatMoney(order.total)}\n` +
+    `💳 Оплата: ${order.paymentMethod}\n` +
+    `⏰ Время: ${order.deliveryTime}\n` +
+    `💬 Комментарий: ${order.comment || 'нет'}\n` +
+    `📌 Статус: ${getOrderStatusLabel(order.status)}`
+  );
 }
 
 function isWorkingHours() {
@@ -1627,13 +1761,19 @@ async function chooseAvailableTable(guests, date, time) {
   return candidate.id;
 }
 
-async function saveOrder(data) {
+function isMissingColumnError(error, columnName) {
+  if (!error || !columnName) return false;
+  const message = `${error.message || ''} ${error.details || ''}`;
+  return error.code === 'PGRST204' || new RegExp(columnName, 'i').test(message);
+}
+
+async function saveOrder(data, meta = {}) {
   const commentWithPayment = [
     data.comment || 'нет',
     data.paymentMethod ? `Оплата: ${data.paymentMethod}` : null
   ].filter(Boolean).join(' | ');
 
-  const payload = {
+  const basePayload = {
     type: 'order',
     client_name: data.name,
     phone: data.phone,
@@ -1648,25 +1788,45 @@ async function saveOrder(data) {
     comment: commentWithPayment
   };
 
-  const { error } = await supabase.from('bookings_cafe').insert(payload);
-  if (!error) return;
+  const extendedPayload = {
+    ...basePayload,
+    order_code: meta.orderCode || null,
+    status: meta.status || 'confirmed',
+    status_comment: meta.statusComment || null,
+    eta_minutes: meta.etaMinutes ?? null,
+    customer_chat_id: meta.customerChatId ?? null
+  };
 
-  const missingPaymentColumn =
-    error.code === 'PGRST204' ||
-    /payment_method/i.test(error.message || '') ||
-    /column .*payment_method/i.test(error.details || '');
+  let response = await supabase
+    .from('bookings_cafe')
+    .insert(extendedPayload)
+    .select('id')
+    .single();
 
-  if (!missingPaymentColumn) {
-    throw new Error(`Failed to save order: ${error.message}`);
+  if (!response.error) {
+    return { id: response.data?.id || null };
   }
 
-  const fallbackPayload = { ...payload };
-  delete fallbackPayload.payment_method;
+  const missingExtendedColumn = ['order_code', 'status', 'status_comment', 'eta_minutes', 'customer_chat_id']
+    .some((column) => isMissingColumnError(response.error, column));
 
-  const { error: fallbackError } = await supabase.from('bookings_cafe').insert(fallbackPayload);
-  if (fallbackError) {
-    throw new Error(`Failed to save order: ${fallbackError.message}`);
+  let fallbackPayload = missingExtendedColumn ? { ...basePayload } : { ...extendedPayload };
+
+  if (isMissingColumnError(response.error, 'payment_method')) {
+    delete fallbackPayload.payment_method;
   }
+
+  response = await supabase
+    .from('bookings_cafe')
+    .insert(fallbackPayload)
+    .select('id')
+    .single();
+
+  if (response.error) {
+    throw new Error(`Failed to save order: ${response.error.message}`);
+  }
+
+  return { id: response.data?.id || null };
 }
 
 async function saveBooking(data) {
@@ -1689,9 +1849,102 @@ async function saveBooking(data) {
   if (error) throw new Error(`Failed to save booking: ${error.message}`);
 }
 
-async function notifyManagers(text) {
+async function updateOrderStatusInDatabase(order) {
+  if (!order?.databaseId) return;
+
+  const updatePayload = {
+    status: order.status,
+    status_comment: order.statusComment || null,
+    eta_minutes: order.etaMinutes ?? null
+  };
+
+  const { error } = await supabase
+    .from('bookings_cafe')
+    .update(updatePayload)
+    .eq('id', order.databaseId);
+
+  if (error && !['status', 'status_comment', 'eta_minutes'].some((column) => isMissingColumnError(error, column))) {
+    throw new Error(`Failed to update order status: ${error.message}`);
+  }
+}
+
+async function applyOrderStatus(orderCode, status, options = {}) {
+  const order = ordersByCode.get(orderCode);
+  if (!order) return null;
+
+  order.status = status;
+  order.statusComment = options.comment || null;
+  if (typeof options.etaMinutes === 'number') {
+    order.etaMinutes = options.etaMinutes;
+  } else if (status !== 'courier_assigned') {
+    order.etaMinutes = null;
+  }
+
+  order.history = order.history || [];
+  order.history.push(createOrderHistoryEntry(status, options.comment || (order.etaMinutes ? `Осталось около ${order.etaMinutes} мин.` : '')));
+
+  await updateOrderStatusInDatabase(order);
+  rememberOrder(order);
+
+  const etaText = order.etaMinutes ? ` Ориентировочно осталось ${order.etaMinutes} минут.` : '';
+  await bot.sendMessage(
+    order.chatId,
+    `Обновление по заказу №${order.orderCode}: сейчас он ${getOrderStatusLabel(order.status)}.${etaText}`,
+    mainKeyboard
+  );
+
+  return order;
+}
+
+async function notifyManagers(text, options = {}) {
   const targets = [...new Set([MANAGER_ID].filter(Boolean))];
-  await Promise.allSettled(targets.map((id) => bot.sendMessage(id, text)));
+  await Promise.allSettled(targets.map((id) => bot.sendMessage(id, text, options)));
+}
+
+async function finalizeOrder(chatId, session, paymentMethod) {
+  session.data.paymentMethod = paymentMethod;
+
+  const orderCode = generateOrderCode();
+  const order = {
+    orderCode,
+    chatId,
+    name: session.data.name,
+    phone: session.data.phone,
+    address: session.data.address,
+    entrance: session.data.entrance,
+    floor: session.data.floor,
+    apartment: session.data.apartment,
+    intercom: session.data.intercom,
+    orderItems: session.data.orderItems,
+    total: session.data.total,
+    paymentMethod: session.data.paymentMethod,
+    deliveryTime: session.data.deliveryTime,
+    comment: session.data.comment || 'нет',
+    status: 'confirmed',
+    statusComment: 'Заказ принят',
+    etaMinutes: null,
+    history: [createOrderHistoryEntry('confirmed', 'Заказ принят')]
+  };
+
+  const saveResult = await saveOrder(session.data, {
+    orderCode,
+    status: order.status,
+    statusComment: order.statusComment,
+    customerChatId: chatId
+  });
+
+  order.databaseId = saveResult?.id || null;
+  rememberOrder(order);
+
+  await notifyManagers(
+    buildManagerOrderMessage(order),
+    buildManagerOrderStatusKeyboard(order.orderCode)
+  );
+
+  await goHome(
+    chatId,
+    `✅ Заказ подтверждён.\nНомер заказа: ${order.orderCode}\nСпособ оплаты: ${paymentMethod}.\nДля проверки статуса используйте кнопку "${TRACK_ORDER_TEXT}".`
+  );
 }
 
 function summarizeSessionForManager(session) {
@@ -2084,6 +2337,57 @@ bot.onText(/\/start/, async (msg) => {
   );
 });
 
+bot.on('callback_query', async (query) => {
+  const data = String(query.data || '');
+  const managerChatId = query.message?.chat?.id;
+
+  try {
+    if (!data.startsWith('order_status:')) {
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (managerChatId !== MANAGER_ID) {
+      await bot.answerCallbackQuery(query.id, { text: 'Эта кнопка доступна только менеджеру.' });
+      return;
+    }
+
+    const [, orderCode, action] = data.split(':');
+    const order = ordersByCode.get(orderCode);
+
+    if (!order) {
+      await bot.answerCallbackQuery(query.id, { text: 'Заказ не найден.' });
+      return;
+    }
+
+    if (action === 'cooking') {
+      await applyOrderStatus(orderCode, 'cooking', { comment: 'Заказ готовится' });
+      await bot.answerCallbackQuery(query.id, { text: `Заказ №${orderCode} переведён в статус "Готовится".` });
+      await bot.sendMessage(managerChatId, `Статус заказа №${orderCode} обновлён: готовится.`);
+      return;
+    }
+
+    if (action === 'courier') {
+      pendingEtaByManager.set(managerChatId, { orderCode });
+      await bot.answerCallbackQuery(query.id, { text: 'Введите, сколько минут осталось до клиента.' });
+      await bot.sendMessage(managerChatId, `Заказ №${orderCode} передан курьеру. Напишите, пожалуйста, сколько минут осталось до клиента.`);
+      return;
+    }
+
+    if (action === 'delivered') {
+      await applyOrderStatus(orderCode, 'delivered', { comment: 'Заказ доставлен' });
+      await bot.answerCallbackQuery(query.id, { text: `Заказ №${orderCode} отмечен как доставленный.` });
+      await bot.sendMessage(managerChatId, `Статус заказа №${orderCode} обновлён: доставлен.`);
+      return;
+    }
+
+    await bot.answerCallbackQuery(query.id);
+  } catch (error) {
+    console.error('Callback query error:', error);
+    await bot.answerCallbackQuery(query.id, { text: 'Не удалось обработать действие.' });
+  }
+});
+
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = String(msg.text || '').trim();
@@ -2092,6 +2396,30 @@ bot.on('message', async (msg) => {
   const session = getSession(chatId);
 
   try {
+    if (chatId === MANAGER_ID && pendingEtaByManager.has(chatId)) {
+      const pending = pendingEtaByManager.get(chatId);
+      const etaMinutes = Number(text);
+
+      if (!Number.isInteger(etaMinutes) || etaMinutes < 1 || etaMinutes > 300) {
+        await bot.sendMessage(chatId, 'Введите, пожалуйста, количество минут целым числом, например: 25.');
+        return;
+      }
+
+      pendingEtaByManager.delete(chatId);
+      const order = await applyOrderStatus(pending.orderCode, 'courier_assigned', {
+        etaMinutes,
+        comment: `Осталось около ${etaMinutes} мин.`
+      });
+
+      if (!order) {
+        await bot.sendMessage(chatId, 'Не удалось найти заказ для обновления статуса.');
+        return;
+      }
+
+      await bot.sendMessage(chatId, `Статус заказа №${order.orderCode} обновлён: передан курьеру, осталось около ${etaMinutes} минут.`);
+      return;
+    }
+
     if (text === '⬅️ Главное меню') {
       await goHome(chatId);
       return;
@@ -2141,6 +2469,50 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    if (text === TRACK_ORDER_TEXT) {
+      const order = getLatestOrderForChat(chatId);
+      await bot.sendMessage(chatId, buildOrderTrackingText(order), mainKeyboard);
+
+      if (order) {
+        await notifyManagers(
+          `Клиент интересуется статусом заказа №${order.orderCode}.\n👤 ${order.name}\n📞 ${order.phone}\n🆔 Chat ID: ${order.chatId}`,
+          buildManagerOrderStatusKeyboard(order.orderCode)
+        );
+      }
+      return;
+    }
+
+    if (text === REPEAT_ORDER_TEXT) {
+      const previousOrder = getLatestOrderForRepeat(chatId);
+      if (!previousOrder) {
+        await bot.sendMessage(chatId, 'Пока не нашёл предыдущих заказов для повтора.', mainKeyboard);
+        return;
+      }
+
+      session.data = {
+        orderItems: (previousOrder.orderItems || []).map((item) => ({ ...item })),
+        total: previousOrder.total,
+        orderMenuSection: null,
+        name: previousOrder.name,
+        phone: previousOrder.phone,
+        address: previousOrder.address,
+        entrance: previousOrder.entrance,
+        floor: previousOrder.floor,
+        apartment: previousOrder.apartment,
+        intercom: previousOrder.intercom,
+        deliveryTime: previousOrder.deliveryTime,
+        comment: previousOrder.comment,
+        paymentMethod: null
+      };
+      nextOrderStep(session, 'confirm');
+      await bot.sendMessage(
+        chatId,
+        `Повторил ваш предыдущий заказ №${previousOrder.orderCode}.\n\n${summarizeOrder(session.data)}\n\nЕсли всё верно, подтвердите заказ. Если хотите что-то поменять, нажмите "✏️ Изменить заказ".`,
+        confirmOrderKeyboard
+      );
+      return;
+    }
+
     if (text === '🪑 Забронировать стол') {
       await startBookingChoice(chatId);
       return;
@@ -2174,50 +2546,12 @@ bot.on('message', async (msg) => {
     }
 
     if (text === CASH_PAYMENT_TEXT && session.flow === 'order' && session.step === 'payment') {
-      session.data.paymentMethod = 'Наличными при получении';
-      await saveOrder(session.data);
-
-      const managerMsg =
-        `🔔 Новый заказ!\n\n` +
-        `👤 Клиент: ${session.data.name}\n` +
-        `📞 Телефон: ${session.data.phone}\n` +
-        `📍 Адрес: ${session.data.address}\n` +
-        `🚪 Подъезд: ${session.data.entrance}\n` +
-        `🏢 Этаж: ${session.data.floor}\n` +
-        `🏠 Квартира: ${session.data.apartment}\n` +
-        `🔢 Домофон: ${session.data.intercom}\n` +
-        `🍽️ Позиции:\n${formatOrderItems(session.data.orderItems)}\n\n` +
-        `💰 Сумма: ${formatMoney(session.data.total)}\n` +
-        `💳 Оплата: ${session.data.paymentMethod}\n` +
-        `⏰ Время: ${session.data.deliveryTime}\n` +
-        `💬 Комментарий: ${session.data.comment || 'нет'}`;
-
-      await notifyManagers(managerMsg);
-      await goHome(chatId, `✅ Заказ подтверждён.\nСпособ оплаты: ${CASH_PAYMENT_TEXT}.\nОжидайте звонка для подтверждения. Спасибо, что выбрали нас!`);
+      await finalizeOrder(chatId, session, 'Наличными при получении');
       return;
     }
 
     if (text === CARD_PAYMENT_TEXT && session.flow === 'order' && session.step === 'payment') {
-      session.data.paymentMethod = 'Картой/Kaspi QR';
-      await saveOrder(session.data);
-
-      const managerMsg =
-        `🔔 Новый заказ!\n\n` +
-        `👤 Клиент: ${session.data.name}\n` +
-        `📞 Телефон: ${session.data.phone}\n` +
-        `📍 Адрес: ${session.data.address}\n` +
-        `🚪 Подъезд: ${session.data.entrance}\n` +
-        `🏢 Этаж: ${session.data.floor}\n` +
-        `🏠 Квартира: ${session.data.apartment}\n` +
-        `🔢 Домофон: ${session.data.intercom}\n` +
-        `🍽️ Позиции:\n${formatOrderItems(session.data.orderItems)}\n\n` +
-        `💰 Сумма: ${formatMoney(session.data.total)}\n` +
-        `💳 Оплата: ${session.data.paymentMethod}\n` +
-        `⏰ Время: ${session.data.deliveryTime}\n` +
-        `💬 Комментарий: ${session.data.comment || 'нет'}`;
-
-      await notifyManagers(managerMsg);
-      await goHome(chatId, `✅ Заказ подтверждён.\nСпособ оплаты: ${CARD_PAYMENT_TEXT}.\nОжидайте звонка для подтверждения. Спасибо, что выбрали нас!`);
+      await finalizeOrder(chatId, session, 'Картой/Kaspi QR');
       return;
     }
 
