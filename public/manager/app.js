@@ -10,14 +10,36 @@ const elements = {
   refreshButton: document.getElementById('refreshButton'),
   logoutButton: document.getElementById('logoutButton'),
   lastUpdated: document.getElementById('lastUpdated'),
-  template: document.getElementById('orderCardTemplate')
+  template: document.getElementById('orderCardTemplate'),
+  chatThreads: document.getElementById('chatThreads'),
+  chatCount: document.getElementById('chatCount'),
+  chatMessages: document.getElementById('chatMessages'),
+  chatPanelTitle: document.getElementById('chatPanelTitle'),
+  chatPanelSubtitle: document.getElementById('chatPanelSubtitle'),
+  chatForm: document.getElementById('chatForm'),
+  chatInput: document.getElementById('chatInput'),
+  chatSendButton: document.getElementById('chatSendButton')
 };
 
 let managerPassword = localStorage.getItem(storageKey) || '';
 let refreshTimer = null;
+let selectedChatId = null;
+let cachedThreads = [];
 
 function formatMoney(amount) {
   return `${Number(amount || 0).toLocaleString('ru-RU')} тг`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function setLoginError(message = '') {
@@ -75,7 +97,7 @@ async function updateOrderStatus(order, status) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, etaMinutes })
     });
-    await loadOrders();
+    await loadDashboard();
   } catch (error) {
     window.alert(error.message);
   }
@@ -171,11 +193,112 @@ function renderBoard(orders) {
   });
 }
 
+function renderThreads(threads) {
+  cachedThreads = threads;
+  elements.chatThreads.innerHTML = '';
+  elements.chatCount.textContent = threads.length;
+
+  if (!threads.length) {
+    renderEmptyState(elements.chatThreads, 'Пока нет обращений');
+    elements.chatPanelTitle.textContent = 'Диалог с клиентом';
+    elements.chatPanelSubtitle.textContent = 'Когда клиент нажмёт "Связаться с менеджером", обращение появится здесь';
+    elements.chatInput.value = '';
+    elements.chatInput.disabled = true;
+    elements.chatSendButton.disabled = true;
+    elements.chatMessages.innerHTML = '';
+    renderEmptyState(elements.chatMessages, 'Пока нет активных обращений');
+    selectedChatId = null;
+    return;
+  }
+
+  if (!selectedChatId || !threads.some((thread) => thread.chatId === selectedChatId)) {
+    selectedChatId = threads[0].chatId;
+  }
+
+  threads.forEach((thread) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `chat-thread${thread.chatId === selectedChatId ? ' active' : ''}`;
+    button.innerHTML = `
+      <div class="chat-thread-title">${thread.name}</div>
+      <div class="chat-thread-meta">${thread.phone || 'Телефон не указан'}${thread.username ? ` • ${thread.username}` : ''}</div>
+      <div class="chat-thread-meta">${formatDateTime(thread.updatedAt)}</div>
+      <div class="chat-thread-preview">${thread.lastMessagePreview || 'Открыт новый чат'}</div>
+    `;
+    button.addEventListener('click', async () => {
+      selectedChatId = thread.chatId;
+      renderThreads(cachedThreads);
+      await loadMessages(thread.chatId);
+    });
+    elements.chatThreads.appendChild(button);
+  });
+
+  const activeThread = threads.find((thread) => thread.chatId === selectedChatId);
+  elements.chatInput.disabled = !activeThread;
+  elements.chatSendButton.disabled = !activeThread;
+  if (activeThread) {
+    elements.chatPanelTitle.textContent = activeThread.name;
+    elements.chatPanelSubtitle.textContent = `${activeThread.phone || 'Телефон не указан'}${activeThread.username ? ` • ${activeThread.username}` : ''}`;
+  }
+}
+
+function renderMessages(messages) {
+  elements.chatMessages.innerHTML = '';
+
+  if (!messages.length) {
+    renderEmptyState(elements.chatMessages, 'Сообщений пока нет');
+    return;
+  }
+
+  messages.forEach((message) => {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble ${message.sender}`;
+    const senderLabel = {
+      client: 'Клиент',
+      manager: 'Менеджер',
+      system: 'Система'
+    }[message.sender] || 'Сообщение';
+
+    bubble.innerHTML = `
+      <div class="chat-bubble-header">${senderLabel} • ${formatDateTime(message.createdAt)}</div>
+      <div>${message.text}</div>
+    `;
+    elements.chatMessages.appendChild(bubble);
+  });
+
+  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
 async function loadOrders() {
+  const payload = await apiFetch('/api/manager/orders');
+  renderBoard(payload.orders || []);
+  return payload;
+}
+
+async function loadThreads() {
+  const payload = await apiFetch('/api/manager/chats');
+  renderThreads(payload.threads || []);
+  return payload;
+}
+
+async function loadMessages(chatId = selectedChatId) {
+  if (!chatId) return;
+  const payload = await apiFetch(`/api/manager/chats/${chatId}/messages`);
+  renderMessages(payload.messages || []);
+}
+
+async function loadDashboard() {
   try {
-    const payload = await apiFetch('/api/manager/orders');
-    renderBoard(payload.orders || []);
-    const updated = new Date(payload.generatedAt || Date.now());
+    const [ordersPayload, threadsPayload] = await Promise.all([
+      loadOrders(),
+      loadThreads()
+    ]);
+    if (selectedChatId) {
+      await loadMessages(selectedChatId);
+    }
+    const updated = new Date(
+      threadsPayload?.generatedAt || ordersPayload?.generatedAt || Date.now()
+    );
     elements.lastUpdated.textContent = `Обновлено: ${updated.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
   } catch (error) {
     if (error.message.includes('авторизация')) {
@@ -206,7 +329,7 @@ async function handleLogin(event) {
 
     localStorage.setItem(storageKey, managerPassword);
     setAuthenticated(true);
-    await loadOrders();
+    await loadDashboard();
   } catch (error) {
     managerPassword = '';
     localStorage.removeItem(storageKey);
@@ -214,9 +337,34 @@ async function handleLogin(event) {
   }
 }
 
+async function handleChatSubmit(event) {
+  event.preventDefault();
+  const chatId = selectedChatId;
+  const message = elements.chatInput.value.trim();
+
+  if (!chatId || !message) return;
+
+  try {
+    elements.chatSendButton.disabled = true;
+    await apiFetch(`/api/manager/chats/${chatId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    });
+    elements.chatInput.value = '';
+    await loadDashboard();
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    elements.chatSendButton.disabled = false;
+  }
+}
+
 function logout() {
   managerPassword = '';
   localStorage.removeItem(storageKey);
+  selectedChatId = null;
+  cachedThreads = [];
   setAuthenticated(false);
 }
 
@@ -224,21 +372,22 @@ function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = window.setInterval(() => {
     if (managerPassword) {
-      loadOrders();
+      loadDashboard();
     }
-  }, 15000);
+  }, 5000);
 }
 
 elements.loginForm.addEventListener('submit', handleLogin);
 elements.refreshButton.addEventListener('click', () => {
   if (managerPassword) {
-    loadOrders();
+    loadDashboard();
   }
 });
 elements.logoutButton.addEventListener('click', logout);
+elements.chatForm.addEventListener('submit', handleChatSubmit);
 
 setAuthenticated(Boolean(managerPassword));
 if (managerPassword) {
-  loadOrders();
+  loadDashboard();
 }
 startAutoRefresh();

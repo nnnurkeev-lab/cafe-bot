@@ -32,6 +32,34 @@
       </section>
 
       <section id="boardSection" class="board-section hidden">
+        <section class="chat-workspace">
+          <div class="chat-sidebar">
+            <div class="column-header">
+              <h2>Обращения</h2>
+              <span id="chatCount" class="count-badge">0</span>
+            </div>
+            <div id="chatThreads" class="chat-thread-list"></div>
+          </div>
+
+          <div class="chat-panel">
+            <div class="column-header">
+              <div>
+                <h2 id="chatPanelTitle">Диалог с клиентом</h2>
+                <p id="chatPanelSubtitle" class="chat-subtitle">Выберите обращение слева</p>
+              </div>
+            </div>
+
+            <div id="chatMessages" class="chat-messages">
+              <div class="empty-state">Пока нет активных обращений</div>
+            </div>
+
+            <form id="chatForm" class="chat-form">
+              <textarea id="chatInput" rows="3" placeholder="Напишите ответ клиенту..." disabled></textarea>
+              <button id="chatSendButton" type="submit" disabled>Отправить</button>
+            </form>
+          </div>
+        </section>
+
         <div class="board-grid">
           <section class="column pending-column">
             <div class="column-header">

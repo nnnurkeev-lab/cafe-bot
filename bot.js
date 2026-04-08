@@ -31,6 +31,7 @@ const CREATOR_TEXT = 'Кто твой создатель?';
 const NONSENSE_REPLY = 'Нормально сформулируйте запрос: напишите блюдо, вопрос по меню или воспользуйтесь кнопками ниже.';
 const TRACK_ORDER_TEXT = '📦 Отследить заказ';
 const REPEAT_ORDER_TEXT = '🔁 Повторить заказ';
+const MANAGER_CHAT_EXIT_TEXT = '⬅️ Выйти из чата';
 const NO_TEXT = 'Нет';
 const DELIVERY_TIME_EXAMPLE_1 = 'Сегодня в 15:00';
 const DELIVERY_TIME_EXAMPLE_2 = 'Завтра в 13:00';
@@ -205,6 +206,11 @@ const bookingKeyboard = createKeyboard([
 const cancelKeyboard = createKeyboard([
   [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
+]);
+
+const managerChatKeyboard = createKeyboard([
+  [{ text: MANAGER_CHAT_EXIT_TEXT }],
+  [{ text: '⬅️ Главное меню' }]
 ]);
 
 const optionalFieldKeyboard = createKeyboard([
@@ -683,6 +689,153 @@ async function getOrderByCode(orderCode) {
   const order = hydrateOrderFromRow(data);
   if (order) rememberOrder(order);
   return order;
+}
+
+async function upsertManagerThread(thread) {
+  const payload = {
+    customer_chat_id: thread.chatId,
+    customer_name: thread.name || 'Гость',
+    customer_username: thread.username || null,
+    customer_phone: thread.phone || null,
+    status: thread.status || 'open',
+    context: thread.context || null,
+    last_message_preview: thread.lastMessagePreview || null,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from('manager_threads_cafe')
+    .upsert(payload, { onConflict: 'customer_chat_id' });
+
+  if (error) {
+    if (isMissingTableError(error, 'manager_threads_cafe')) {
+      throw new Error('MANAGER_CHAT_TABLES_MISSING');
+    }
+    throw new Error(`Failed to save manager thread: ${error.message}`);
+  }
+}
+
+async function saveManagerChatMessage(message) {
+  const payload = {
+    customer_chat_id: message.chatId,
+    sender: message.sender,
+    message: message.text,
+    created_at: message.createdAt || new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from('manager_messages_cafe')
+    .insert(payload);
+
+  if (error) {
+    if (isMissingTableError(error, 'manager_messages_cafe')) {
+      throw new Error('MANAGER_CHAT_TABLES_MISSING');
+    }
+    throw new Error(`Failed to save manager message: ${error.message}`);
+  }
+}
+
+async function openManagerChatThread(chatId, session, user, options = {}) {
+  const summary = summarizeSessionForManager(session);
+  const preview = options.preview || 'Клиент просит связаться с менеджером';
+
+  await upsertManagerThread({
+    chatId,
+    name: `${user?.first_name || 'Гость'}${user?.last_name ? ` ${user.last_name}` : ''}`.trim(),
+    username: user?.username ? `@${user.username}` : null,
+    phone: session?.data?.phone || null,
+    context: summary,
+    lastMessagePreview: preview,
+    status: 'open'
+  });
+}
+
+async function appendManagerChatMessage(chatId, sender, text, metadata = {}) {
+  const cleanText = String(text || '').trim();
+  if (!cleanText) return;
+
+  await saveManagerChatMessage({
+    chatId,
+    sender,
+    text: cleanText,
+    createdAt: metadata.createdAt
+  });
+
+  await upsertManagerThread({
+    chatId,
+    name: metadata.name || 'Гость',
+    username: metadata.username || null,
+    phone: metadata.phone || null,
+    context: metadata.context || null,
+    lastMessagePreview: cleanText,
+    status: 'open'
+  });
+}
+
+async function loadManagerChatThreads() {
+  const { data, error } = await supabase
+    .from('manager_threads_cafe')
+    .select('*')
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    if (isMissingTableError(error, 'manager_threads_cafe')) {
+      throw new Error('MANAGER_CHAT_TABLES_MISSING');
+    }
+    throw new Error(`Failed to load manager chat threads: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+async function loadManagerChatMessages(chatId) {
+  const { data, error } = await supabase
+    .from('manager_messages_cafe')
+    .select('*')
+    .eq('customer_chat_id', chatId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    if (isMissingTableError(error, 'manager_messages_cafe')) {
+      throw new Error('MANAGER_CHAT_TABLES_MISSING');
+    }
+    throw new Error(`Failed to load manager chat messages: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+function serializeManagerThread(thread) {
+  return {
+    chatId: Number(thread.customer_chat_id),
+    name: thread.customer_name || 'Гость',
+    username: thread.customer_username || null,
+    phone: thread.customer_phone || null,
+    status: thread.status || 'open',
+    context: thread.context || '',
+    lastMessagePreview: thread.last_message_preview || '',
+    updatedAt: thread.updated_at || null
+  };
+}
+
+function serializeManagerMessage(message) {
+  return {
+    id: message.id,
+    chatId: Number(message.customer_chat_id),
+    sender: message.sender,
+    text: message.message,
+    createdAt: message.created_at
+  };
+}
+
+async function sendManagerReplyToCustomer(chatId, text) {
+  const messageText = String(text || '').trim();
+  if (!messageText) {
+    throw new Error('EMPTY_MANAGER_MESSAGE');
+  }
+
+  await bot.sendMessage(chatId, `Сообщение от менеджера:\n${messageText}`, managerChatKeyboard);
+  await appendManagerChatMessage(chatId, 'manager', messageText);
 }
 
 function isWorkingHours() {
@@ -2104,6 +2257,12 @@ function isMissingColumnError(error, columnName) {
   return error.code === 'PGRST204' || new RegExp(columnName, 'i').test(message);
 }
 
+function isMissingTableError(error, tableName) {
+  if (!error || !tableName) return false;
+  const message = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`;
+  return error.code === 'PGRST205' || new RegExp(tableName, 'i').test(message);
+}
+
 async function saveOrder(data, meta = {}) {
   const commentWithPayment = [
     data.comment || 'нет',
@@ -2312,18 +2471,30 @@ function summarizeSessionForManager(session) {
 
 async function contactManager(chatId, session, user) {
   const username = user?.username ? `@${user.username}` : 'не указан';
+  const displayName = `${user?.first_name || 'Гость'}${user?.last_name ? ` ${user.last_name}` : ''}`.trim();
   const managerMessage =
     `🆘 Клиент просит связаться с менеджером\n\n` +
-    `👤 Telegram: ${user?.first_name || 'Гость'}${user?.last_name ? ` ${user.last_name}` : ''}\n` +
+    `👤 Telegram: ${displayName}\n` +
     `🆔 Chat ID: ${chatId}\n` +
     `🔗 Username: ${username}\n\n` +
     `${summarizeSessionForManager(session)}`;
 
+  await openManagerChatThread(chatId, session, user, {
+    preview: 'Клиент нажал "Связаться с менеджером"'
+  });
+  await appendManagerChatMessage(chatId, 'system', 'Клиент запросил связь с менеджером.', {
+    name: displayName,
+    username: user?.username ? `@${user.username}` : null,
+    phone: session?.data?.phone || null,
+    context: summarizeSessionForManager(session)
+  });
   await notifyManagers(managerMessage);
+  session.flow = 'manager_chat';
+  session.step = 'active';
   await bot.sendMessage(
     chatId,
-    'Передал ваш запрос менеджеру. Он увидит ваш контакт и текущий контекст обращения и свяжется с вами при первой возможности.',
-    mainKeyboard
+    'Передал ваш запрос менеджеру. Напишите сообщение сюда, и менеджер ответит прямо в этом чате.',
+    managerChatKeyboard
   );
 }
 
@@ -2813,6 +2984,45 @@ async function handleManagerApi(req, res, pathname) {
     return true;
   }
 
+  if (pathname === '/api/manager/chats' && req.method === 'GET') {
+    const threads = await loadManagerChatThreads();
+    sendJson(res, 200, {
+      threads: threads.map(serializeManagerThread),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  const chatMessagesMatch = pathname.match(/^\/api\/manager\/chats\/(\d+)\/messages$/);
+  if (chatMessagesMatch && req.method === 'GET') {
+    const chatId = Number(chatMessagesMatch[1]);
+    const messages = await loadManagerChatMessages(chatId);
+    sendJson(res, 200, {
+      messages: messages.map(serializeManagerMessage),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (chatMessagesMatch && req.method === 'POST') {
+    const chatId = Number(chatMessagesMatch[1]);
+    const body = await readJsonBody(req);
+    const text = String(body.message || '').trim();
+
+    if (!text) {
+      sendJson(res, 400, { error: 'Сообщение не может быть пустым.' });
+      return true;
+    }
+
+    await sendManagerReplyToCustomer(chatId, text);
+    const messages = await loadManagerChatMessages(chatId);
+    sendJson(res, 200, {
+      ok: true,
+      messages: messages.map(serializeManagerMessage)
+    });
+    return true;
+  }
+
   const statusMatch = pathname.match(/^\/api\/manager\/orders\/([^/]+)\/status$/);
   if (statusMatch && req.method === 'POST') {
     const orderCode = decodeURIComponent(statusMatch[1]);
@@ -2906,6 +3116,8 @@ function startManagerServer() {
       if (!res.headersSent) {
         const message = error.message === 'INVALID_JSON'
           ? 'Некорректный JSON.'
+          : error.message === 'MANAGER_CHAT_TABLES_MISSING'
+            ? 'В Supabase пока нет таблиц для чата менеджера.'
           : error.message === 'REQUEST_TOO_LARGE'
             ? 'Слишком большой запрос.'
             : 'Внутренняя ошибка сервера.';
@@ -3038,8 +3250,25 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    if (text === MANAGER_CHAT_EXIT_TEXT && session.flow === 'manager_chat') {
+      await goHome(chatId, 'Чат с менеджером завершён. Если понадобится, можно написать снова.');
+      return;
+    }
+
     if (text === CONTACT_MANAGER_TEXT) {
       await contactManager(chatId, session, msg.from);
+      return;
+    }
+
+    if (session.flow === 'manager_chat') {
+      const displayName = `${msg.from?.first_name || 'Гость'}${msg.from?.last_name ? ` ${msg.from.last_name}` : ''}`.trim();
+      await appendManagerChatMessage(chatId, 'client', text, {
+        name: displayName,
+        username: msg.from?.username ? `@${msg.from.username}` : null,
+        phone: session?.data?.phone || null,
+        context: summarizeSessionForManager(session)
+      });
+      await bot.sendMessage(chatId, 'Сообщение отправлено менеджеру. Можете написать ещё или нажать "⬅️ Выйти из чата".', managerChatKeyboard);
       return;
     }
 
