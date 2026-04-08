@@ -34,6 +34,36 @@ const elements = {
   trackingOrderCodeInput: document.getElementById('trackingOrderCodeInput')
 };
 
+function bumpElement(element) {
+  if (!element) return;
+  element.classList.remove('is-bumping');
+  void element.offsetWidth;
+  element.classList.add('is-bumping');
+}
+
+function setupRevealAnimations() {
+  const targets = document.querySelectorAll('.reveal, .reveal-card');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach((target) => target.classList.add('is-visible'));
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      entry.target.classList.add('is-visible');
+      observer.unobserve(entry.target);
+    });
+  }, { threshold: 0.12 });
+
+  targets.forEach((target, index) => {
+    target.style.transitionDelay = `${Math.min(index * 45, 220)}ms`;
+    observer.observe(target);
+  });
+}
+
 function money(value) {
   return `${Number(value || 0).toLocaleString('ru-RU')} тг`;
 }
@@ -96,8 +126,16 @@ function renderMenu() {
         quantity: existing ? existing.quantity + 1 : 1
       });
       renderCart();
+      bumpElement(elements.cartTotal);
     });
     elements.menuGrid.appendChild(fragment);
+  });
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.reveal-card').forEach((card, index) => {
+      card.style.transitionDelay = `${Math.min(index * 40, 200)}ms`;
+      card.classList.add('is-visible');
+    });
   });
 }
 
@@ -113,6 +151,7 @@ function updateCartQuantity(id, delta) {
   }
 
   renderCart();
+  bumpElement(elements.cartTotal);
 }
 
 function renderCart() {
@@ -163,9 +202,14 @@ async function bootstrap() {
     const payload = await apiFetch('/api/client/bootstrap');
     state.menu = payload.menu;
     elements.minOrderBadge.textContent = `Минимум: ${money(payload.menu.minOrderTotal)}`;
+    const heroMinOrder = document.getElementById('heroMinOrder');
+    if (heroMinOrder) {
+      heroMinOrder.textContent = `Минимум заказа ${money(payload.menu.minOrderTotal)}`;
+    }
     renderTabs();
     renderMenu();
     renderCart();
+    setupRevealAnimations();
   } catch (error) {
     buildResultCard(elements.trackingResult, error.message, 'error');
   }

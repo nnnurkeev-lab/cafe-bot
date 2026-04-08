@@ -8,29 +8,40 @@
 </head>
 <body>
   <div class="page-shell">
-    <header class="hero">
+    <header class="hero reveal">
       <div class="hero-copy">
-        <p class="eyebrow">Cafe Bot</p>
-        <h1>Доставка и бронь без Telegram</h1>
-        <p>Для клиентов теперь есть отдельный сайт: выбирайте блюда, бронируйте стол и отслеживайте заказ в одном окне.</p>
+        <p class="eyebrow">Демо-кафе</p>
+        <h1>Закуски к столу, доставка и бронь в одном месте</h1>
+        <p class="hero-text">Выбирайте любимые позиции, оформляйте доставку за пару минут или заранее бронируйте стол на вечер.</p>
         <div class="hero-actions">
           <a class="hero-button primary" href="#delivery">Сделать заказ</a>
           <a class="hero-button" href="#booking">Забронировать стол</a>
-          <a class="hero-button" href="#tracking">Отследить заказ</a>
+          <a class="hero-button" href="#tracking">Проверить статус</a>
+        </div>
+        <div class="hero-points">
+          <span>Доставка с 08:00 до 02:00</span>
+          <span id="heroMinOrder">Минимум заказа уточняется</span>
+          <span>Бронь столика за пару минут</span>
         </div>
       </div>
-      <div class="hero-note">
-        <span class="hero-badge">Менеджерская панель</span>
-        <p>Все заказы и брони сразу синхронизируются с менеджерами.</p>
+      <div class="hero-aside">
+        <div class="hero-orb hero-orb-large"></div>
+        <div class="hero-orb hero-orb-small"></div>
+        <div class="hero-card">
+          <p class="hero-card-label">Сегодня особенно хорошо идут</p>
+          <h2>холодные ассорти, крылышки и уютные вечерние брони</h2>
+          <p>Соберите заказ сразу на сайте или оставьте столик на нужное время.</p>
+        </div>
       </div>
     </header>
 
     <main class="layout">
-      <section id="delivery" class="section-card delivery-section">
+      <section id="delivery" class="section-card delivery-section reveal">
         <div class="section-head">
           <div>
             <p class="eyebrow">Доставка</p>
             <h2>Соберите заказ</h2>
+            <p class="section-copy">Выберите раздел, добавьте блюда в корзину и заполните данные для доставки.</p>
           </div>
           <p id="minOrderBadge" class="badge-text"></p>
         </div>
@@ -72,13 +83,14 @@
         </div>
       </section>
 
-      <section id="booking" class="section-card booking-section">
+      <section id="booking" class="section-card booking-section reveal">
         <div class="section-head">
           <div>
             <p class="eyebrow">Бронь</p>
             <h2>Забронировать стол</h2>
+            <p class="section-copy">Напишите дату, время и количество гостей. Если хотите, можно сразу прикрепить блюда из корзины.</p>
           </div>
-          <p class="helper-copy">Можно сразу приложить блюда из текущей корзины как предзаказ.</p>
+          <p class="helper-copy">Например: завтра в 19:00</p>
         </div>
 
         <form id="bookingForm" class="booking-form">
@@ -98,13 +110,14 @@
         </form>
       </section>
 
-      <section id="tracking" class="section-card tracking-section">
+      <section id="tracking" class="section-card tracking-section reveal">
         <div class="section-head">
           <div>
             <p class="eyebrow">Статус</p>
             <h2>Отследить заказ</h2>
+            <p class="section-copy">Введите номер заказа, чтобы быстро посмотреть текущий статус и историю обновлений.</p>
           </div>
-          <p class="helper-copy">Введите номер заказа, который вы получили после оформления.</p>
+          <p class="helper-copy">Номер приходит сразу после оформления</p>
         </div>
 
         <form id="trackingForm" class="tracking-form">
@@ -118,7 +131,7 @@
   </div>
 
   <template id="menuItemTemplate">
-    <article class="menu-card">
+    <article class="menu-card reveal-card">
       <div>
         <p class="menu-category"></p>
         <h3 class="menu-name"></h3>
