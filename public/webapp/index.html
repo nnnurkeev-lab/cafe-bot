@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Cafe Bot Web App</title>
+  <link rel="stylesheet" href="/webapp/styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <p class="eyebrow">Cafe Bot</p>
+      <h1>Меню доставки</h1>
+      <p class="hero-copy">Выберите блюда, соберите корзину и отправьте заказ прямо в Telegram.</p>
+    </header>
+
+    <nav id="categoryTabs" class="tabs"></nav>
+
+    <main>
+      <section id="menuGrid" class="menu-grid"></section>
+
+      <section class="checkout">
+        <div class="checkout-head">
+          <h2>Корзина</h2>
+          <span id="cartTotal" class="cart-total">0 тг</span>
+        </div>
+
+        <div id="cartItems" class="cart-items"></div>
+
+        <form id="checkoutForm" class="checkout-form">
+          <input id="nameInput" type="text" placeholder="Имя получателя" required>
+          <input id="phoneInput" type="tel" placeholder="+7XXXXXXXXXX" required>
+          <input id="addressInput" type="text" placeholder="Адрес доставки" required>
+          <div class="grid-two">
+            <input id="entranceInput" type="text" placeholder="Подъезд">
+            <input id="floorInput" type="text" placeholder="Этаж">
+          </div>
+          <div class="grid-two">
+            <input id="apartmentInput" type="text" placeholder="Квартира">
+            <input id="intercomInput" type="text" placeholder="Домофон">
+          </div>
+          <input id="deliveryTimeInput" type="text" placeholder="Когда привезти? Например: завтра в 13:00" required>
+          <textarea id="commentInput" rows="3" placeholder="Комментарий для курьера"></textarea>
+          <div class="payment-group">
+            <label><input type="radio" name="paymentMethod" value="Наличными при получении" checked> Наличными</label>
+            <label><input type="radio" name="paymentMethod" value="Картой/Kaspi QR"> Kaspi QR / карта</label>
+          </div>
+          <button id="submitButton" type="submit">Отправить заказ</button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <template id="menuItemTemplate">
+    <article class="menu-card">
+      <div>
+        <p class="menu-category"></p>
+        <h3 class="menu-name"></h3>
+      </div>
+      <div class="menu-foot">
+        <span class="menu-price"></span>
+        <button class="add-button" type="button">Добавить</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/webapp/app.js" defer></script>
+</body>
+</html>

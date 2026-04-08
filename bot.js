@@ -3,6 +3,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
@@ -16,6 +17,7 @@ const MANAGER_ID = Number(process.env.MANAGER_ID || 979390128);
 const MY_ID = Number(process.env.MY_ID || 979390128);
 const MANAGER_WEB_PASSWORD = process.env.MANAGER_WEB_PASSWORD || '';
 const PORT = Number(process.env.PORT || 3000);
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/u, '');
 const TIME_ZONE = 'Asia/Almaty';
 const MIN_ORDER_TOTAL = 4000;
 const CONTACT_MANAGER_TEXT = '👨‍💼 Связаться с менеджером';
@@ -52,6 +54,7 @@ const ordersByCode = new Map();
 const orderCodesByChat = new Map();
 const pendingEtaByManager = new Map();
 const managerPanelDir = path.join(__dirname, 'public', 'manager');
+const webAppDir = path.join(__dirname, 'public', 'webapp');
 
 const TABLES = [
   { id: 1, seats: 2 },
@@ -140,6 +143,21 @@ function createKeyboard(rows, isPersistent = false) {
       keyboard: rows,
       resize_keyboard: true,
       is_persistent: isPersistent
+    }
+  };
+}
+
+function createWebAppKeyboard(webAppUrl) {
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: '🍕 Открыть меню', web_app: { url: webAppUrl } }],
+        [{ text: '🪑 Забронировать стол' }, { text: TRACK_ORDER_TEXT }],
+        [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
+        [{ text: REPEAT_ORDER_TEXT }, { text: CONTACT_MANAGER_TEXT }]
+      ],
+      resize_keyboard: true,
+      is_persistent: true
     }
   };
 }
@@ -264,6 +282,19 @@ const coldOrderKeyboard = createMenuSectionKeyboard('cold');
 const hotOrderKeyboard = createMenuSectionKeyboard('hot');
 const coldPreorderKeyboard = createMenuSectionKeyboard('cold', { allowSkipPreorder: true });
 const hotPreorderKeyboard = createMenuSectionKeyboard('hot', { allowSkipPreorder: true });
+
+function getWebAppUrl() {
+  if (!PUBLIC_BASE_URL) return '';
+  return `${PUBLIC_BASE_URL}/webapp`;
+}
+
+function getMainKeyboard() {
+  const webAppUrl = getWebAppUrl();
+  if (webAppUrl) {
+    return createWebAppKeyboard(webAppUrl);
+  }
+  return mainKeyboard;
+}
 
 function getSession(chatId) {
   if (!sessions.has(chatId)) {
@@ -836,6 +867,112 @@ async function sendManagerReplyToCustomer(chatId, text) {
 
   await bot.sendMessage(chatId, `Сообщение от менеджера:\n${messageText}`, managerChatKeyboard);
   await appendManagerChatMessage(chatId, 'manager', messageText);
+}
+
+function buildMenuPayload() {
+  return {
+    categories: [
+      { id: 'cold', title: 'Холодные закуски' },
+      { id: 'hot', title: 'Горячие закуски' }
+    ],
+    items: MENU_ITEMS.map((item) => ({
+      id: normalizeText(item.name).replace(/\s+/gu, '-'),
+      name: item.name,
+      price: item.price,
+      category: item.category
+    })),
+    minOrderTotal: MIN_ORDER_TOTAL
+  };
+}
+
+function verifyTelegramWebAppInitData(initData) {
+  const rawInitData = String(initData || '').trim();
+  if (!rawInitData) {
+    throw new Error('WEBAPP_INIT_REQUIRED');
+  }
+
+  const params = new URLSearchParams(rawInitData);
+  const hash = params.get('hash');
+  if (!hash) {
+    throw new Error('WEBAPP_INIT_INVALID');
+  }
+
+  params.delete('hash');
+  const dataCheckString = [...params.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+
+  const secret = crypto
+    .createHmac('sha256', 'WebAppData')
+    .update(TELEGRAM_TOKEN)
+    .digest();
+
+  const calculatedHash = crypto
+    .createHmac('sha256', secret)
+    .update(dataCheckString)
+    .digest('hex');
+
+  if (calculatedHash !== hash) {
+    throw new Error('WEBAPP_INIT_INVALID');
+  }
+
+  const userRaw = params.get('user');
+  const user = userRaw ? JSON.parse(userRaw) : null;
+  if (!user?.id) {
+    throw new Error('WEBAPP_USER_MISSING');
+  }
+
+  return {
+    user,
+    queryId: params.get('query_id') || null
+  };
+}
+
+async function createConfirmedOrder(chatId, orderData, paymentMethod) {
+  const payload = {
+    ...orderData,
+    paymentMethod
+  };
+
+  const orderCode = generateOrderCode();
+  const order = {
+    orderCode,
+    chatId,
+    name: payload.name,
+    phone: payload.phone,
+    address: payload.address,
+    entrance: payload.entrance,
+    floor: payload.floor,
+    apartment: payload.apartment,
+    intercom: payload.intercom,
+    orderItems: payload.orderItems,
+    total: payload.total,
+    paymentMethod: payload.paymentMethod,
+    deliveryTime: payload.deliveryTime,
+    comment: payload.comment || 'нет',
+    status: 'confirmed',
+    statusComment: 'Заказ принят',
+    etaMinutes: null,
+    history: [createOrderHistoryEntry('confirmed', 'Заказ принят')]
+  };
+
+  const saveResult = await saveOrder(payload, {
+    orderCode,
+    status: order.status,
+    statusComment: order.statusComment,
+    customerChatId: chatId
+  });
+
+  order.databaseId = saveResult?.id || null;
+  rememberOrder(order);
+
+  await notifyManagers(
+    buildManagerOrderMessage(order),
+    buildManagerOrderStatusKeyboard(order.orderCode)
+  );
+
+  return order;
 }
 
 function isWorkingHours() {
@@ -2384,11 +2521,11 @@ async function applyOrderStatus(orderCode, status, options = {}) {
 
   const etaText = order.etaMinutes ? ` Ориентировочно осталось ${order.etaMinutes} минут.` : '';
   if (order.chatId) {
-    await bot.sendMessage(
-      order.chatId,
-      `Обновление по заказу №${order.orderCode}: сейчас он ${getOrderStatusLabel(order.status)}.${etaText}`,
-      mainKeyboard
-    );
+      await bot.sendMessage(
+        order.chatId,
+        `Обновление по заказу №${order.orderCode}: сейчас он ${getOrderStatusLabel(order.status)}.${etaText}`,
+        getMainKeyboard()
+      );
   }
 
   return order;
@@ -2401,43 +2538,7 @@ async function notifyManagers(text, options = {}) {
 
 async function finalizeOrder(chatId, session, paymentMethod) {
   session.data.paymentMethod = paymentMethod;
-
-  const orderCode = generateOrderCode();
-  const order = {
-    orderCode,
-    chatId,
-    name: session.data.name,
-    phone: session.data.phone,
-    address: session.data.address,
-    entrance: session.data.entrance,
-    floor: session.data.floor,
-    apartment: session.data.apartment,
-    intercom: session.data.intercom,
-    orderItems: session.data.orderItems,
-    total: session.data.total,
-    paymentMethod: session.data.paymentMethod,
-    deliveryTime: session.data.deliveryTime,
-    comment: session.data.comment || 'нет',
-    status: 'confirmed',
-    statusComment: 'Заказ принят',
-    etaMinutes: null,
-    history: [createOrderHistoryEntry('confirmed', 'Заказ принят')]
-  };
-
-  const saveResult = await saveOrder(session.data, {
-    orderCode,
-    status: order.status,
-    statusComment: order.statusComment,
-    customerChatId: chatId
-  });
-
-  order.databaseId = saveResult?.id || null;
-  rememberOrder(order);
-
-  await notifyManagers(
-    buildManagerOrderMessage(order),
-    buildManagerOrderStatusKeyboard(order.orderCode)
-  );
+  const order = await createConfirmedOrder(chatId, session.data, paymentMethod);
 
   await goHome(
     chatId,
@@ -2586,7 +2687,7 @@ async function answerMenuQuestion(question, session = null) {
 
 async function goHome(chatId, text = 'Вы в главном меню 👋') {
   resetSession(chatId);
-  await bot.sendMessage(chatId, text, mainKeyboard);
+  await bot.sendMessage(chatId, text, getMainKeyboard());
 }
 
 function nextOrderStep(session, step) {
@@ -2605,7 +2706,7 @@ async function startOrder(chatId) {
     await bot.sendMessage(
       chatId,
       `Сейчас по Алматы ${now.time}, сегодня ${now.date}. С 02:00 до 08:00 мы временно не принимаем заказы. Будем рады помочь после 08:00.`,
-      mainKeyboard
+      getMainKeyboard()
     );
     return;
   }
@@ -2932,6 +3033,18 @@ function getManagerStaticFilePath(pathname) {
   return filePath;
 }
 
+function getWebAppStaticFilePath(pathname) {
+  const requestedPath = pathname === '/webapp' || pathname === '/webapp/'
+    ? '/index.html'
+    : pathname.replace(/^\/webapp/, '') || '/index.html';
+
+  const normalized = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+  const filePath = path.join(webAppDir, normalized);
+
+  if (!filePath.startsWith(webAppDir)) return null;
+  return filePath;
+}
+
 function getContentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const contentTypes = {
@@ -3067,10 +3180,136 @@ async function handleManagerApi(req, res, pathname) {
   return true;
 }
 
+async function handleWebAppApi(req, res, pathname) {
+  if (pathname === '/api/webapp/session' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const { user } = verifyTelegramWebAppInitData(body.initData);
+    sendJson(res, 200, {
+      ok: true,
+      menu: buildMenuPayload(),
+      user: {
+        id: user.id,
+        firstName: user.first_name || 'Гость',
+        lastName: user.last_name || '',
+        username: user.username || ''
+      }
+    });
+    return true;
+  }
+
+  if (pathname === '/api/webapp/orders' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const { user } = verifyTelegramWebAppInitData(body.initData);
+    const customer = body.customer || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+    const paymentMethod = String(body.paymentMethod || '').trim();
+    const deliveryTimeInput = String(body.deliveryTime || '').trim();
+
+    if (!customer.name || !isValidName(customer.name)) {
+      sendJson(res, 400, { error: 'Укажите корректное имя.' });
+      return true;
+    }
+
+    if (!customer.phone || !isValidPhone(customer.phone)) {
+      sendJson(res, 400, { error: 'Укажите корректный номер телефона.' });
+      return true;
+    }
+
+    if (!customer.address || String(customer.address).trim().length < 5) {
+      sendJson(res, 400, { error: 'Укажите подробный адрес доставки.' });
+      return true;
+    }
+
+    const parsedDelivery = await parseDeliveryDateTime(deliveryTimeInput);
+    if (!parsedDelivery?.parsedTime || !isBookingTimeAllowed(parsedDelivery.parsedTime)) {
+      sendJson(res, 400, { error: 'Не удалось распознать время доставки.' });
+      return true;
+    }
+
+    if (!['Наличными при получении', 'Картой/Kaspi QR'].includes(paymentMethod)) {
+      sendJson(res, 400, { error: 'Выберите способ оплаты.' });
+      return true;
+    }
+
+    const orderItems = items.map((entry) => {
+      const menuItem = MENU_ITEMS.find((item) => item.name === entry.name);
+      const quantity = Number(entry.quantity || 0);
+      if (!menuItem || !Number.isInteger(quantity) || quantity < 1) {
+        return null;
+      }
+      return buildOrderItem(menuItem, quantity);
+    }).filter(Boolean);
+
+    if (!orderItems.length) {
+      sendJson(res, 400, { error: 'Добавьте хотя бы одно блюдо.' });
+      return true;
+    }
+
+    const total = calculateOrderTotal(orderItems);
+    if (total < MIN_ORDER_TOTAL) {
+      sendJson(res, 400, { error: `Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.` });
+      return true;
+    }
+
+    const order = await createConfirmedOrder(user.id, {
+      name: customer.name.trim(),
+      phone: normalizePhone(customer.phone),
+      address: String(customer.address).trim(),
+      entrance: normalizeOptionalDeliveryField(customer.entrance || NO_TEXT),
+      floor: normalizeOptionalDeliveryField(customer.floor || NO_TEXT),
+      apartment: normalizeOptionalDeliveryField(customer.apartment || NO_TEXT),
+      intercom: normalizeOptionalDeliveryField(customer.intercom || NO_TEXT),
+      orderItems,
+      total,
+      paymentMethod,
+      deliveryTime: parsedDelivery.displayValue,
+      comment: normalizeOptionalDeliveryField(customer.comment || NO_TEXT)
+    }, paymentMethod);
+
+    await bot.sendMessage(
+      user.id,
+      `✅ Заказ подтверждён.\nНомер заказа: ${order.orderCode}\nСпособ оплаты: ${paymentMethod}.\nДля проверки статуса используйте кнопку "${TRACK_ORDER_TEXT}".`,
+      getMainKeyboard()
+    );
+
+    sendJson(res, 200, {
+      ok: true,
+      orderCode: order.orderCode
+    });
+    return true;
+  }
+
+  return false;
+}
+
 async function handleManagerStatic(req, res, pathname) {
   if (!pathname.startsWith('/manager')) return false;
 
   const filePath = getManagerStaticFilePath(pathname);
+  if (!filePath) {
+    sendText(res, 403, 'Forbidden');
+    return true;
+  }
+
+  try {
+    const data = await fs.promises.readFile(filePath);
+    sendText(res, 200, data, getContentType(filePath));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      sendText(res, 404, 'Not found');
+      return true;
+    }
+
+    throw error;
+  }
+
+  return true;
+}
+
+async function handleWebAppStatic(req, res, pathname) {
+  if (!pathname.startsWith('/webapp')) return false;
+
+  const filePath = getWebAppStaticFilePath(pathname);
   if (!filePath) {
     sendText(res, 403, 'Forbidden');
     return true;
@@ -3101,7 +3340,15 @@ function startManagerServer() {
         return;
       }
 
+      if (await handleWebAppApi(req, res, pathname)) {
+        return;
+      }
+
       if (await handleManagerStatic(req, res, pathname)) {
+        return;
+      }
+
+      if (await handleWebAppStatic(req, res, pathname)) {
         return;
       }
 
@@ -3116,6 +3363,12 @@ function startManagerServer() {
       if (!res.headersSent) {
         const message = error.message === 'INVALID_JSON'
           ? 'Некорректный JSON.'
+          : error.message === 'WEBAPP_INIT_REQUIRED'
+            ? 'Telegram Web App не передал initData.'
+          : error.message === 'WEBAPP_INIT_INVALID'
+            ? 'Не удалось проверить сессию Telegram Web App.'
+          : error.message === 'WEBAPP_USER_MISSING'
+            ? 'В Telegram Web App не найден пользователь.'
           : error.message === 'MANAGER_CHAT_TABLES_MISSING'
             ? 'В Supabase пока нет таблиц для чата менеджера.'
           : error.message === 'REQUEST_TOO_LARGE'
@@ -3274,7 +3527,7 @@ bot.on('message', async (msg) => {
 
     if (text === '📋 Меню') {
       await safeSendMenu(chatId);
-      await bot.sendMessage(chatId, 'Если захотите, сразу помогу оформить заказ или бронь.', mainKeyboard);
+      await bot.sendMessage(chatId, 'Если захотите, сразу помогу оформить заказ или бронь.', getMainKeyboard());
       return;
     }
 
@@ -3288,7 +3541,7 @@ bot.on('message', async (msg) => {
         `• помочь отследить заказ\n\n` +
         `Доставка работает с 08:00 до 02:00 по Алматы.\n` +
         `Сейчас у нас: ${getCurrentTimeText()}`,
-        mainKeyboard
+        getMainKeyboard()
       );
       return;
     }
@@ -3297,7 +3550,7 @@ bot.on('message', async (msg) => {
       await bot.sendMessage(
         chatId,
         'Мой создатель-великий человек Нурали и мой юзернейм @bmfqq',
-        mainKeyboard
+        getMainKeyboard()
       );
       return;
     }
@@ -3309,7 +3562,7 @@ bot.on('message', async (msg) => {
 
     if (text === TRACK_ORDER_TEXT) {
       const order = getLatestOrderForChat(chatId);
-      await bot.sendMessage(chatId, buildOrderTrackingText(order), mainKeyboard);
+      await bot.sendMessage(chatId, buildOrderTrackingText(order), getMainKeyboard());
 
       if (order) {
         await notifyManagers(
@@ -3323,7 +3576,7 @@ bot.on('message', async (msg) => {
     if (text === REPEAT_ORDER_TEXT) {
       const previousOrder = getLatestOrderForRepeat(chatId);
       if (!previousOrder) {
-        await bot.sendMessage(chatId, 'Пока не нашёл предыдущих заказов для повтора.', mainKeyboard);
+        await bot.sendMessage(chatId, 'Пока не нашёл предыдущих заказов для повтора.', getMainKeyboard());
         return;
       }
 
@@ -3439,7 +3692,7 @@ bot.on('message', async (msg) => {
 
     pushHistoryEntry(session, 'user', text);
     const answer = await answerMenuQuestion(text, session);
-    await bot.sendMessage(chatId, answer, mainKeyboard);
+    await bot.sendMessage(chatId, answer, getMainKeyboard());
     pushHistoryEntry(session, 'assistant', answer);
   } catch (error) {
     console.error('Bot error:', error);
@@ -3449,7 +3702,7 @@ bot.on('message', async (msg) => {
       session.data.tableNum = await chooseAvailableTable(session.data.guests, session.data.date, session.data.time);
 
       if (!session.data.tableNum) {
-        await bot.sendMessage(chatId, 'Пока вы подтверждали бронь, свободные столики на это время закончились. Попробуйте другую дату или время.', mainKeyboard);
+        await bot.sendMessage(chatId, 'Пока вы подтверждали бронь, свободные столики на это время закончились. Попробуйте другую дату или время.', getMainKeyboard());
         resetSession(chatId);
         return;
       }
@@ -3466,7 +3719,7 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(
       chatId,
       'Произошла ошибка при обработке запроса. Попробуйте ещё раз или вернитесь в главное меню.',
-      mainKeyboard
+      getMainKeyboard()
     );
   }
 });
