@@ -31,6 +31,13 @@ const CREATOR_TEXT = 'Кто твой создатель?';
 const NONSENSE_REPLY = 'Нормально сформулируйте запрос: напишите блюдо, вопрос по меню или воспользуйтесь кнопками ниже.';
 const TRACK_ORDER_TEXT = '📦 Отследить заказ';
 const REPEAT_ORDER_TEXT = '🔁 Повторить заказ';
+const NO_TEXT = 'Нет';
+const DELIVERY_TIME_EXAMPLE_1 = 'Сегодня в 15:00';
+const DELIVERY_TIME_EXAMPLE_2 = 'Завтра в 13:00';
+const DELIVERY_TIME_EXAMPLE_3 = 'Через час';
+const BOOKING_TIME_EXAMPLE_1 = 'Сегодня в 19:00';
+const BOOKING_TIME_EXAMPLE_2 = 'Завтра в 20:00';
+const BOOKING_TIME_EXAMPLE_3 = 'В пятницу в 18:00';
 
 if (!TELEGRAM_TOKEN) throw new Error('TELEGRAM_TOKEN is required');
 if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_KEY are required');
@@ -119,7 +126,7 @@ const MENU_ITEMS = [
 ];
 
 const MAIN_KEYBOARD_ROWS = [
-  [{ text: '🍕 Заказать еду' }, { text: '🪑 Забронировать стол' }],
+  [{ text: '🍕 Заказать доставку' }, { text: '🪑 Забронировать стол' }],
   [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
   [{ text: TRACK_ORDER_TEXT }, { text: REPEAT_ORDER_TEXT }],
   [{ text: CREATOR_TEXT }],
@@ -198,6 +205,32 @@ const bookingKeyboard = createKeyboard([
 const cancelKeyboard = createKeyboard([
   [{ text: CONTACT_MANAGER_TEXT }],
   [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
+]);
+
+const optionalFieldKeyboard = createKeyboard([
+  [{ text: NO_TEXT }],
+  [{ text: CONTACT_MANAGER_TEXT }],
+  [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
+]);
+
+const deliveryTimeKeyboard = createKeyboard([
+  [{ text: DELIVERY_TIME_EXAMPLE_1 }, { text: DELIVERY_TIME_EXAMPLE_2 }],
+  [{ text: DELIVERY_TIME_EXAMPLE_3 }],
+  [{ text: CONTACT_MANAGER_TEXT }],
+  [{ text: '❌ Отменить заказ' }, { text: '⬅️ Главное меню' }]
+]);
+
+const bookingDateTimeKeyboard = createKeyboard([
+  [{ text: BOOKING_TIME_EXAMPLE_1 }, { text: BOOKING_TIME_EXAMPLE_2 }],
+  [{ text: BOOKING_TIME_EXAMPLE_3 }],
+  [{ text: CONTACT_MANAGER_TEXT }],
+  [{ text: '❌ Отменить' }, { text: '⬅️ Главное меню' }]
+]);
+
+const guestsKeyboard = createKeyboard([
+  [{ text: '2' }, { text: '4' }, { text: '6' }],
+  [{ text: CONTACT_MANAGER_TEXT }],
+  [{ text: '❌ Отменить' }, { text: '⬅️ Главное меню' }]
 ]);
 
 const confirmOrderKeyboard = createKeyboard([
@@ -986,6 +1019,132 @@ function parseBookingDateTime(text) {
     hasDate: Boolean(parsedDate),
     hasTime: Boolean(parsedTime)
   };
+}
+
+function isSameParsedDate(left, right) {
+  if (!left || !right) return false;
+  return left.day === right.day && left.month === right.month && left.year === right.year;
+}
+
+function formatDeliveryDateTimeValue(parsedDate, parsedTime) {
+  if (!parsedTime) return '';
+
+  const today = buildRelativeDate(0);
+  if (!parsedDate || isSameParsedDate(parsedDate, today)) {
+    return parsedTime.value;
+  }
+
+  return `${parsedDate.value} ${parsedTime.value}`;
+}
+
+async function parseNaturalDateTimeWithOpenAI(text, options = {}) {
+  if (!openai) return null;
+
+  const mode = options.mode === 'booking' ? 'booking' : 'delivery';
+  const now = getCurrentDateTimeParts();
+  const allowDateOmission = options.allowDateOmission !== false;
+  const instructionTail = mode === 'booking'
+    ? 'Нужно распознать дату и время брони.'
+    : 'Нужно распознать время доставки. Дата допустима, если клиент явно указывает завтра, послезавтра или другую дату.';
+
+  try {
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                `Ты извлекаешь дату и время из сообщений клиентов ресторана. ${instructionTail} ` +
+                `Часовой пояс Asia/Almaty. Сейчас ${now.date} ${now.time}. ` +
+                `Верни только JSON без markdown и без пояснений в формате ` +
+                `{"date":"DD.MM.YYYY|null","time":"HH:MM|null","confidence":0-1}. ` +
+                `Если дата не указана и её можно опустить, верни null в поле date. ` +
+                `Если время не удалось понять надёжно, верни null в поле time. ` +
+                `Не выдумывай дату и время, если фраза недостаточно ясна.`
+            }
+          ]
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text
+            }
+          ]
+        }
+      ]
+    });
+
+    const raw = String(response.output_text || '').trim();
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const parsedDate = parsed.date && parsed.date !== 'null' ? parseDate(parsed.date) : null;
+    const parsedTime = parsed.time && parsed.time !== 'null' ? parseTime(parsed.time) : null;
+
+    if (!allowDateOmission && !parsedDate) {
+      return null;
+    }
+
+    return {
+      parsedDate,
+      parsedTime,
+      hasDate: Boolean(parsedDate),
+      hasTime: Boolean(parsedTime),
+      confidence: Number(parsed.confidence || 0)
+    };
+  } catch (error) {
+    console.error('OpenAI date/time parse failed:', error);
+    return null;
+  }
+}
+
+async function parseDeliveryDateTime(text) {
+  const parsedTime = parseTime(text);
+  const parsedDate = parseDate(text);
+
+  if (parsedTime) {
+    return {
+      parsedDate,
+      parsedTime,
+      displayValue: formatDeliveryDateTimeValue(parsedDate, parsedTime),
+      source: 'local'
+    };
+  }
+
+  const aiParsed = await parseNaturalDateTimeWithOpenAI(text, {
+    mode: 'delivery',
+    allowDateOmission: true
+  });
+
+  if (!aiParsed?.parsedTime) {
+    return null;
+  }
+
+  return {
+    parsedDate: aiParsed.parsedDate,
+    parsedTime: aiParsed.parsedTime,
+    displayValue: formatDeliveryDateTimeValue(aiParsed.parsedDate, aiParsed.parsedTime),
+    source: 'openai'
+  };
+}
+
+async function parseBookingDateTimeSmart(text) {
+  const localParsed = parseBookingDateTime(text);
+  if (localParsed.hasDate || localParsed.hasTime) {
+    return localParsed;
+  }
+
+  const aiParsed = await parseNaturalDateTimeWithOpenAI(text, {
+    mode: 'booking',
+    allowDateOmission: true
+  });
+
+  return aiParsed || localParsed;
 }
 
 function isBookingTimeAllowed(parsedTime) {
@@ -2291,7 +2450,7 @@ async function startOrder(chatId) {
   await safeSendMenu(chatId);
   await bot.sendMessage(
     chatId,
-    'Напишите, что хотите заказать. Можно писать свободно или выбрать раздел кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё".',
+    'Что хотите заказать?\n\nМожно написать блюда сообщением или выбрать раздел ниже. Когда закончите, нажмите "✅ Завершить выбор".',
     orderCategoryKeyboard
   );
 }
@@ -2301,7 +2460,7 @@ async function startBookingChoice(chatId) {
   session.data = {};
   session.flow = 'booking_choice';
   session.step = 'choice';
-  await bot.sendMessage(chatId, 'Как вы хотите забронировать стол?', bookingKeyboard);
+  await bot.sendMessage(chatId, 'Как оформить бронь?', bookingKeyboard);
 }
 
 async function startBooking(chatId, withFood) {
@@ -2313,7 +2472,7 @@ async function startBooking(chatId, withFood) {
     await safeSendMenu(chatId);
   }
 
-  await bot.sendMessage(chatId, 'Напишите, пожалуйста, ваше имя.', cancelKeyboard);
+  await bot.sendMessage(chatId, 'Как вас зовут?', cancelKeyboard);
 }
 
 async function handleOrderFlow(chatId, text, session) {
@@ -2327,83 +2486,83 @@ async function handleOrderFlow(chatId, text, session) {
 
     case 'delivery_name':
       if (!isValidName(text)) {
-        await bot.sendMessage(chatId, 'Введите корректное имя');
+        await bot.sendMessage(chatId, 'Напишите, пожалуйста, имя без цифр и лишних символов.');
         return;
       }
       data.name = text.trim();
       nextOrderStep(session, 'delivery_phone');
-      await bot.sendMessage(chatId, 'Укажите номер телефона получателя.');
+      await bot.sendMessage(chatId, 'Телефон получателя?', cancelKeyboard);
       return;
 
     case 'delivery_phone':
       if (!isValidPhone(text)) {
-        await bot.sendMessage(chatId, 'Введите корректный номер телефона');
+        await bot.sendMessage(chatId, 'Не получилось распознать номер. Отправьте его в формате +7XXXXXXXXXX.');
         return;
       }
       data.phone = normalizePhone(text);
       nextOrderStep(session, 'delivery_address');
-      await bot.sendMessage(chatId, 'Укажите адрес доставки.');
+      await bot.sendMessage(chatId, 'Куда привезти заказ? Напишите улицу и номер дома.', cancelKeyboard);
       return;
 
     case 'delivery_address':
       if (text.trim().length < 5) {
-        await bot.sendMessage(chatId, 'Адрес выглядит слишком коротким. Пожалуйста, укажите адрес подробнее.');
+        await bot.sendMessage(chatId, 'Адрес слишком короткий. Напишите, пожалуйста, подробнее: улица и номер дома.');
         return;
       }
       data.address = text.trim();
       nextOrderStep(session, 'delivery_entrance');
-      await bot.sendMessage(chatId, 'Укажите подъезд. Если его нет, напишите "нет".');
+      await bot.sendMessage(chatId, 'Подъезд? Если его нет, нажмите "Нет".', optionalFieldKeyboard);
       return;
 
     case 'delivery_entrance':
       data.entrance = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'delivery_floor');
-      await bot.sendMessage(chatId, 'Укажите этаж. Если его нет, напишите "нет".');
+      await bot.sendMessage(chatId, 'Этаж? Если его нет, нажмите "Нет".', optionalFieldKeyboard);
       return;
 
     case 'delivery_floor':
       data.floor = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'delivery_apartment');
-      await bot.sendMessage(chatId, 'Укажите квартиру. Если её нет, напишите "нет".');
+      await bot.sendMessage(chatId, 'Квартира? Если её нет, нажмите "Нет".', optionalFieldKeyboard);
       return;
 
     case 'delivery_apartment':
       data.apartment = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'delivery_intercom');
-      await bot.sendMessage(chatId, 'Укажите домофон. Если его нет, напишите "нет".');
+      await bot.sendMessage(chatId, 'Домофон? Если его нет, нажмите "Нет".', optionalFieldKeyboard);
       return;
 
     case 'delivery_intercom':
       data.intercom = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'delivery_time');
-      await bot.sendMessage(chatId, 'Когда привезти заказ? Можно написать, например: "15:00", "к 3 дня", "8 вечера" или "через час".');
+      await bot.sendMessage(chatId, 'Когда привезти заказ?\n\nНапример: "15:00", "завтра в 13:00", "к 3 дня" или "через час".', deliveryTimeKeyboard);
       return;
 
     case 'delivery_time': {
-      const parsedTime = parseTime(text);
-      if (!parsedTime || !isBookingTimeAllowed(parsedTime)) {
-        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время доставки. Мы принимаем заказы с 08:00 до 02:00. Можно написать, например: "15:00", "к 3 дня", "8 вечера" или "через час".');
+      const parsedDelivery = await parseDeliveryDateTime(text);
+      if (!parsedDelivery?.parsedTime || !isBookingTimeAllowed(parsedDelivery.parsedTime)) {
+        await bot.sendMessage(chatId, 'Не понял время доставки. Мы принимаем заказы с 08:00 до 02:00.\n\nНапишите, например: "15:00", "завтра в 13:00", "к 3 дня" или "через час".', deliveryTimeKeyboard);
         return;
       }
-      data.deliveryTime = parsedTime.value;
+      data.deliveryTime = parsedDelivery.displayValue;
       nextOrderStep(session, 'delivery_comment');
-      await bot.sendMessage(chatId, 'Есть комментарий для курьера? Если нет, напишите "нет".');
+      await bot.sendMessage(chatId, 'Комментарий для курьера? Если нет, нажмите "Нет".', optionalFieldKeyboard);
       return;
     }
 
     case 'delivery_comment':
       data.comment = normalizeOptionalDeliveryField(text);
       nextOrderStep(session, 'confirm');
-      await bot.sendMessage(chatId, `${summarizeOrder(data)}\n\nЕсли всё верно, подтвердите заказ.`, confirmOrderKeyboard);
+      await bot.sendMessage(chatId, `${summarizeOrder(data)}\n\nПроверьте заказ и подтвердите его кнопкой ниже.`, confirmOrderKeyboard);
       return;
     
 
     case 'payment':
-      await bot.sendMessage(chatId, 'Выберите, пожалуйста, способ оплаты кнопками ниже.', paymentKeyboard);
+      await bot.sendMessage(chatId, 'Как вам удобно оплатить?', paymentKeyboard);
       return;
 
     case 'confirm':
-      await bot.sendMessage(chatId, `Сумма вашего заказа: ${formatMoney(data.total)}.\nИспользуйте кнопки ниже, чтобы подтвердить заказ, изменить его или вернуться в главное меню.`, confirmOrderKeyboard);
+      await bot.sendMessage(chatId, `Итого: ${formatMoney(data.total)}.\nЕсли всё верно, подтвердите заказ.`, confirmOrderKeyboard);
       return;
 
     default:
@@ -2418,26 +2577,26 @@ async function handleBookingFlow(chatId, text, session) {
   switch (session.step) {
     case 'name':
       if (!isValidName(text)) {
-        await bot.sendMessage(chatId, 'Введите корректное имя');
+        await bot.sendMessage(chatId, 'Напишите, пожалуйста, имя без цифр и лишних символов.');
         return;
       }
       data.name = text.trim();
       nextBookingStep(session, 'phone', withFood);
-      await bot.sendMessage(chatId, 'Укажите номер телефона.');
+      await bot.sendMessage(chatId, 'Ваш номер телефона?', cancelKeyboard);
       return;
 
     case 'phone':
       if (!isValidPhone(text)) {
-        await bot.sendMessage(chatId, 'Введите корректный номер телефона');
+        await bot.sendMessage(chatId, 'Не получилось распознать номер. Отправьте его в формате +7XXXXXXXXXX.');
         return;
       }
       data.phone = normalizePhone(text);
       nextBookingStep(session, 'date_time', withFood);
-      await bot.sendMessage(chatId, 'Когда и на какое время вы хотите забронировать стол? Например: "сегодня в 15:30", "завтра к 3 дня", "7 апреля в 8 вечера".');
+      await bot.sendMessage(chatId, 'На когда забронировать стол?\n\nНапример: "сегодня в 19:00", "завтра к 3 дня" или "в пятницу в 20:00".', bookingDateTimeKeyboard);
       return;
 
     case 'date_time': {
-      const { parsedDate, parsedTime, hasDate, hasTime } = parseBookingDateTime(text);
+      const { parsedDate, parsedTime, hasDate, hasTime } = await parseBookingDateTimeSmart(text);
       const savedDate = data.pendingBookingDate ? parseDate(data.pendingBookingDate) : null;
       const savedTime = data.pendingBookingTime ? parseTime(data.pendingBookingTime) : null;
       const finalDate = parsedDate || savedDate;
@@ -2453,31 +2612,31 @@ async function handleBookingFlow(chatId, text, session) {
 
       if (!hasDate && !hasTime) {
         if (savedDate && !savedTime) {
-          await bot.sendMessage(chatId, `Дату уже запомнил: ${savedDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`);
+          await bot.sendMessage(chatId, `Дату запомнил: ${savedDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`, bookingDateTimeKeyboard);
           return;
         }
 
         if (!savedDate && savedTime) {
-          await bot.sendMessage(chatId, `Время уже запомнил: ${savedTime.value}. Теперь напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".`);
+          await bot.sendMessage(chatId, `Время запомнил: ${savedTime.value}. Теперь напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".`, bookingDateTimeKeyboard);
           return;
         }
 
-        await bot.sendMessage(chatId, 'Не удалось распознать ни дату, ни время. Напишите одним сообщением, например: "сегодня в 15:30", "завтра к 3 дня" или "в пятницу в 8 вечера".');
+        await bot.sendMessage(chatId, 'Не понял дату и время. Напишите одним сообщением, например: "сегодня в 19:00", "завтра к 3 дня" или "в пятницу в 20:00".', bookingDateTimeKeyboard);
         return;
       }
 
       if (!finalDate) {
-        await bot.sendMessage(chatId, 'Не удалось распознать дату. Напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".');
+        await bot.sendMessage(chatId, 'Не понял дату. Напишите только дату, например: "сегодня", "завтра", "8 апреля" или "в пятницу".', bookingDateTimeKeyboard);
         return;
       }
 
       if (!finalTime) {
-        await bot.sendMessage(chatId, `Дату запомнил: ${finalDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`);
+        await bot.sendMessage(chatId, `Дату запомнил: ${finalDate.value}. Теперь напишите только время, например: "15:30", "к 4 дня" или "8 вечера".`, bookingDateTimeKeyboard);
         return;
       }
 
       if (!isBookingTimeAllowed(finalTime)) {
-        await bot.sendMessage(chatId, 'Не удалось распознать подходящее время. Бронь принимается с 08:00 до 02:00. Напишите только время, например: "15:30", "к 4 дня" или "8 вечера".');
+        await bot.sendMessage(chatId, 'Это время не подходит. Бронь принимается с 08:00 до 02:00.\n\nНапишите только время, например: "15:30", "к 4 дня" или "8 вечера".', bookingDateTimeKeyboard);
         return;
       }
 
@@ -2486,13 +2645,13 @@ async function handleBookingFlow(chatId, text, session) {
       data.pendingBookingDate = null;
       data.pendingBookingTime = null;
       nextBookingStep(session, 'guests', withFood);
-      await bot.sendMessage(chatId, 'Укажите количество гостей.');
+      await bot.sendMessage(chatId, 'Сколько будет гостей?', guestsKeyboard);
       return;
     }
 
     case 'guests':
       if (!isPositiveInteger(text)) {
-        await bot.sendMessage(chatId, 'Количество гостей должно быть целым числом.');
+        await bot.sendMessage(chatId, 'Напишите количество гостей целым числом, например: 2, 4 или 6.', guestsKeyboard);
         return;
       }
 
@@ -2515,7 +2674,7 @@ async function handleBookingFlow(chatId, text, session) {
         nextBookingStep(session, 'preorder', true);
         await bot.sendMessage(
           chatId,
-          `Подобрал столик №${data.tableNum}. Теперь можете оформить предзаказ так же, как обычный заказ: пишите позиции свободно или выбирайте разделы кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё". Если предзаказ не нужен, нажмите "🚫 Без предзаказа" или напишите "нет".`,
+          `Подобрал столик №${data.tableNum}. Теперь можно оформить предзаказ: пишите блюда сообщением или выбирайте разделы ниже. Когда закончите, нажмите "✅ Завершить выбор". Если предзаказ не нужен, нажмите "🚫 Без предзаказа".`,
           preorderCategoryKeyboard
         );
       } else {
@@ -2529,7 +2688,7 @@ async function handleBookingFlow(chatId, text, session) {
       return;
 
     case 'confirm':
-      await bot.sendMessage(chatId, 'Используйте кнопки ниже, чтобы подтвердить или изменить бронь.', confirmBookingKeyboard);
+      await bot.sendMessage(chatId, 'Проверьте бронь и подтвердите её кнопкой ниже.', confirmBookingKeyboard);
       return;
 
     default:
@@ -2775,7 +2934,7 @@ bot.onText(/\/start/, async (msg) => {
   const now = getCurrentDateTimeParts();
   await goHome(
     msg.chat.id,
-    `Привет, ${name}! 👋\n\nДобро пожаловать в наш ресторан.\nСейчас по Алматы ${now.time}, сегодня ${now.date}.\nЧем могу помочь?`
+    `Привет, ${name}!\n\nЯ помогу оформить доставку, бронь стола и подскажу по меню.\nСейчас по Алматы ${now.time}, сегодня ${now.date}.`
   );
 });
 
@@ -2893,12 +3052,13 @@ bot.on('message', async (msg) => {
     if (text === 'ℹ️ Помощь') {
       await bot.sendMessage(
         chatId,
-        `Я могу:\n` +
-        `• принять заказ на доставку\n` +
-        `• помочь с бронью столика\n` +
-        `• подсказать по меню\n\n` +
-        `Заказы на доставку принимаются с 08:00 до 02:00 по Алматы.\n` +
-        `Сейчас в ресторане: ${getCurrentTimeText()}`,
+        `Вот что я умею:\n` +
+        `• оформить доставку\n` +
+        `• забронировать стол\n` +
+        `• подсказать по меню\n` +
+        `• помочь отследить заказ\n\n` +
+        `Доставка работает с 08:00 до 02:00 по Алматы.\n` +
+        `Сейчас у нас: ${getCurrentTimeText()}`,
         mainKeyboard
       );
       return;
@@ -2913,7 +3073,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (text === '🍕 Заказать еду') {
+    if (text === '🍕 Заказать доставку') {
       await startOrder(chatId);
       return;
     }
@@ -2980,7 +3140,7 @@ bot.on('message', async (msg) => {
     if (text === '✏️ Изменить заказ' && session.flow === 'order') {
       session.data = { orderItems: [], total: 0, orderMenuSection: null, paymentMethod: null };
       nextOrderStep(session, 'items');
-      await bot.sendMessage(chatId, 'Начнём заново. Напишите, что хотите заказать. Можно писать свободно или выбрать раздел кнопками ниже. Когда закончите, нажмите "✅ Завершить выбор" или напишите "всё".', orderCategoryKeyboard);
+      await bot.sendMessage(chatId, 'Начнём заново. Напишите блюда сообщением или выберите раздел ниже. Когда закончите, нажмите "✅ Завершить выбор".', orderCategoryKeyboard);
       return;
     }
 
@@ -3008,7 +3168,7 @@ bot.on('message', async (msg) => {
       const withFood = session.flow === 'booking_with_food';
       session.data = { withFood };
       nextBookingStep(session, 'name', withFood);
-      await bot.sendMessage(chatId, 'Начнём заново. Напишите, пожалуйста, ваше имя.', cancelKeyboard);
+      await bot.sendMessage(chatId, 'Начнём заново. Как вас зовут?', cancelKeyboard);
       return;
     }
 
