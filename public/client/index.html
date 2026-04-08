@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Демо-кафе</title>
+  <link rel="stylesheet" href="/client/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Cafe Bot</p>
+        <h1>Доставка и бронь без Telegram</h1>
+        <p>Для клиентов теперь есть отдельный сайт: выбирайте блюда, бронируйте стол и отслеживайте заказ в одном окне.</p>
+        <div class="hero-actions">
+          <a class="hero-button primary" href="#delivery">Сделать заказ</a>
+          <a class="hero-button" href="#booking">Забронировать стол</a>
+          <a class="hero-button" href="#tracking">Отследить заказ</a>
+        </div>
+      </div>
+      <div class="hero-note">
+        <span class="hero-badge">Менеджерская панель</span>
+        <p>Все заказы и брони сразу синхронизируются с менеджерами.</p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="delivery" class="section-card delivery-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Доставка</p>
+            <h2>Соберите заказ</h2>
+          </div>
+          <p id="minOrderBadge" class="badge-text"></p>
+        </div>
+
+        <nav id="categoryTabs" class="tabs"></nav>
+
+        <div class="delivery-grid">
+          <section id="menuGrid" class="menu-grid"></section>
+
+          <aside class="checkout">
+            <div class="checkout-head">
+              <h3>Корзина</h3>
+              <span id="cartTotal" class="cart-total">0 тг</span>
+            </div>
+
+            <div id="cartItems" class="cart-items"></div>
+
+            <form id="checkoutForm" class="stack-form">
+              <input id="nameInput" type="text" placeholder="Имя получателя" required>
+              <input id="phoneInput" type="tel" placeholder="+7XXXXXXXXXX" required>
+              <input id="addressInput" type="text" placeholder="Адрес доставки" required>
+              <div class="grid-two">
+                <input id="entranceInput" type="text" placeholder="Подъезд">
+                <input id="floorInput" type="text" placeholder="Этаж">
+              </div>
+              <div class="grid-two">
+                <input id="apartmentInput" type="text" placeholder="Квартира">
+                <input id="intercomInput" type="text" placeholder="Домофон">
+              </div>
+              <input id="deliveryTimeInput" type="text" placeholder="Когда привезти? Например: завтра в 13:00" required>
+              <textarea id="commentInput" rows="3" placeholder="Комментарий для курьера"></textarea>
+              <div class="payment-group">
+                <label><input type="radio" name="paymentMethod" value="Наличными при получении" checked> Наличными</label>
+                <label><input type="radio" name="paymentMethod" value="Картой/Kaspi QR"> Kaspi QR / карта</label>
+              </div>
+              <button id="submitButton" class="primary-button" type="submit">Оформить заказ</button>
+            </form>
+          </aside>
+        </div>
+      </section>
+
+      <section id="booking" class="section-card booking-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Бронь</p>
+            <h2>Забронировать стол</h2>
+          </div>
+          <p class="helper-copy">Можно сразу приложить блюда из текущей корзины как предзаказ.</p>
+        </div>
+
+        <form id="bookingForm" class="booking-form">
+          <div class="grid-two">
+            <input id="bookingNameInput" type="text" placeholder="Ваше имя" required>
+            <input id="bookingPhoneInput" type="tel" placeholder="+7XXXXXXXXXX" required>
+          </div>
+          <div class="grid-two">
+            <input id="bookingDateTimeInput" type="text" placeholder="Например: завтра в 19:00" required>
+            <input id="bookingGuestsInput" type="number" min="1" step="1" placeholder="Количество гостей" required>
+          </div>
+          <label class="checkbox-row">
+            <input id="bookingUseCartInput" type="checkbox">
+            Добавить текущую корзину как предзаказ к брони
+          </label>
+          <button id="bookingSubmitButton" class="primary-button" type="submit">Подтвердить бронь</button>
+        </form>
+      </section>
+
+      <section id="tracking" class="section-card tracking-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Статус</p>
+            <h2>Отследить заказ</h2>
+          </div>
+          <p class="helper-copy">Введите номер заказа, который вы получили после оформления.</p>
+        </div>
+
+        <form id="trackingForm" class="tracking-form">
+          <input id="trackingOrderCodeInput" type="text" placeholder="Например: ORD-ABC123" required>
+          <button class="primary-button" type="submit">Показать статус</button>
+        </form>
+
+        <div id="trackingResult" class="result-card empty-state">Пока ничего не искали</div>
+      </section>
+    </main>
+  </div>
+
+  <template id="menuItemTemplate">
+    <article class="menu-card">
+      <div>
+        <p class="menu-category"></p>
+        <h3 class="menu-name"></h3>
+      </div>
+      <div class="menu-foot">
+        <span class="menu-price"></span>
+        <button class="add-button" type="button">Добавить</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/client/app.js" defer></script>
+</body>
+</html>

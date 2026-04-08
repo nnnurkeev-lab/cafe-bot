@@ -55,6 +55,7 @@ const orderCodesByChat = new Map();
 const pendingEtaByManager = new Map();
 const managerPanelDir = path.join(__dirname, 'public', 'manager');
 const webAppDir = path.join(__dirname, 'public', 'webapp');
+const clientSiteDir = path.join(__dirname, 'public', 'client');
 
 const TABLES = [
   { id: 1, seats: 2 },
@@ -506,6 +507,8 @@ function createOrderHistoryEntry(status, comment = '') {
 function rememberOrder(order) {
   ordersByCode.set(order.orderCode, order);
 
+  if (order.chatId == null) return;
+
   const existingCodes = orderCodesByChat.get(order.chatId) || [];
   orderCodesByChat.set(order.chatId, [...existingCodes.filter((code) => code !== order.orderCode), order.orderCode]);
 }
@@ -576,11 +579,20 @@ function buildOrderTrackingText(order) {
 }
 
 function buildManagerOrderMessage(order) {
+  const sourceLabels = {
+    telegram: 'Telegram-бот',
+    webapp: 'Telegram Mini App',
+    site: 'Сайт'
+  };
+  const sourceLine = `🌐 Источник: ${sourceLabels[order.source] || 'Не указан'}\n`;
+  const chatLine = order.chatId ? `🆔 Chat ID: ${order.chatId}\n` : '';
+
   return (
     `🔔 Новый заказ №${order.orderCode}\n\n` +
+    sourceLine +
     `👤 Клиент: ${order.name}\n` +
     `📞 Телефон: ${order.phone}\n` +
-    `🆔 Chat ID: ${order.chatId}\n` +
+    chatLine +
     `📍 Адрес: ${order.address}\n` +
     `🚪 Подъезд: ${order.entrance}\n` +
     `🏢 Этаж: ${order.floor}\n` +
@@ -641,6 +653,7 @@ function hydrateOrderFromRow(row) {
     paymentMethod: row.payment_method || 'не указана',
     deliveryTime: row.time || 'как можно скорее',
     comment: extractCommentText(row.comment),
+    source: row.customer_chat_id ? 'telegram' : 'site',
     status: row.status || 'confirmed',
     statusComment: row.status_comment || null,
     etaMinutes: typeof row.eta_minutes === 'number' ? row.eta_minutes : null,
@@ -951,6 +964,7 @@ async function createConfirmedOrder(chatId, orderData, paymentMethod) {
     paymentMethod: payload.paymentMethod,
     deliveryTime: payload.deliveryTime,
     comment: payload.comment || 'нет',
+    source: payload.source || (chatId == null ? 'site' : 'telegram'),
     status: 'confirmed',
     statusComment: 'Заказ принят',
     etaMinutes: null,
@@ -3045,6 +3059,18 @@ function getWebAppStaticFilePath(pathname) {
   return filePath;
 }
 
+function getClientStaticFilePath(pathname) {
+  const requestedPath = pathname === '/' || pathname === '/client' || pathname === '/client/'
+    ? '/index.html'
+    : pathname.replace(/^\/client/, '') || '/index.html';
+
+  const normalized = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+  const filePath = path.join(clientSiteDir, normalized);
+
+  if (!filePath.startsWith(clientSiteDir)) return null;
+  return filePath;
+}
+
 function getContentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const contentTypes = {
@@ -3282,6 +3308,207 @@ async function handleWebAppApi(req, res, pathname) {
   return false;
 }
 
+async function handleClientApi(req, res, pathname) {
+  if (pathname === '/api/client/bootstrap' && req.method === 'GET') {
+    sendJson(res, 200, {
+      ok: true,
+      menu: buildMenuPayload(),
+      contactManagerUrl: PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/manager` : '/manager'
+    });
+    return true;
+  }
+
+  if (pathname === '/api/client/orders' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const customer = body.customer || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+    const paymentMethod = String(body.paymentMethod || '').trim();
+    const deliveryTimeInput = String(body.deliveryTime || '').trim();
+
+    if (!customer.name || !isValidName(customer.name)) {
+      sendJson(res, 400, { error: 'Укажите корректное имя.' });
+      return true;
+    }
+
+    if (!customer.phone || !isValidPhone(customer.phone)) {
+      sendJson(res, 400, { error: 'Укажите корректный номер телефона.' });
+      return true;
+    }
+
+    if (!customer.address || String(customer.address).trim().length < 5) {
+      sendJson(res, 400, { error: 'Укажите подробный адрес доставки.' });
+      return true;
+    }
+
+    const parsedDelivery = await parseDeliveryDateTime(deliveryTimeInput);
+    if (!parsedDelivery?.parsedTime || !isBookingTimeAllowed(parsedDelivery.parsedTime)) {
+      sendJson(res, 400, { error: 'Не удалось распознать время доставки.' });
+      return true;
+    }
+
+    if (!['Наличными при получении', 'Картой/Kaspi QR'].includes(paymentMethod)) {
+      sendJson(res, 400, { error: 'Выберите способ оплаты.' });
+      return true;
+    }
+
+    const orderItems = items.map((entry) => {
+      const menuItem = MENU_ITEMS.find((item) => item.name === entry.name);
+      const quantity = Number(entry.quantity || 0);
+      if (!menuItem || !Number.isInteger(quantity) || quantity < 1) {
+        return null;
+      }
+      return buildOrderItem(menuItem, quantity);
+    }).filter(Boolean);
+
+    if (!orderItems.length) {
+      sendJson(res, 400, { error: 'Добавьте хотя бы одно блюдо.' });
+      return true;
+    }
+
+    const total = calculateOrderTotal(orderItems);
+    if (total < MIN_ORDER_TOTAL) {
+      sendJson(res, 400, { error: `Минимальная сумма доставки — ${formatMoney(MIN_ORDER_TOTAL)}.` });
+      return true;
+    }
+
+    const order = await createConfirmedOrder(null, {
+      name: customer.name.trim(),
+      phone: normalizePhone(customer.phone),
+      address: String(customer.address).trim(),
+      entrance: normalizeOptionalDeliveryField(customer.entrance || NO_TEXT),
+      floor: normalizeOptionalDeliveryField(customer.floor || NO_TEXT),
+      apartment: normalizeOptionalDeliveryField(customer.apartment || NO_TEXT),
+      intercom: normalizeOptionalDeliveryField(customer.intercom || NO_TEXT),
+      orderItems,
+      total,
+      paymentMethod,
+      deliveryTime: parsedDelivery.displayValue,
+      comment: normalizeOptionalDeliveryField(customer.comment || NO_TEXT),
+      source: 'site'
+    }, paymentMethod);
+
+    sendJson(res, 200, {
+      ok: true,
+      orderCode: order.orderCode
+    });
+    return true;
+  }
+
+  if (pathname === '/api/client/bookings' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const booking = body.booking || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    if (!booking.name || !isValidName(booking.name)) {
+      sendJson(res, 400, { error: 'Укажите корректное имя.' });
+      return true;
+    }
+
+    if (!booking.phone || !isValidPhone(booking.phone)) {
+      sendJson(res, 400, { error: 'Укажите корректный номер телефона.' });
+      return true;
+    }
+
+    if (!isPositiveInteger(booking.guests)) {
+      sendJson(res, 400, { error: 'Укажите количество гостей.' });
+      return true;
+    }
+
+    const guests = Number(booking.guests);
+    if (guests > Math.max(...TABLES.map((table) => table.seats))) {
+      sendJson(res, 400, { error: 'Для такого количества гостей у нас нет подходящего столика.' });
+      return true;
+    }
+
+    const parsed = await parseBookingDateTimeSmart(String(booking.dateTime || '').trim());
+    if (!parsed.parsedDate || !parsed.parsedTime) {
+      sendJson(res, 400, { error: 'Не удалось распознать дату и время брони.' });
+      return true;
+    }
+
+    if (!isBookingTimeAllowed(parsed.parsedTime)) {
+      sendJson(res, 400, { error: 'Это время не подходит. Бронь принимается с 08:00 до 02:00.' });
+      return true;
+    }
+
+    const tableNum = await chooseAvailableTable(guests, parsed.parsedDate.value, parsed.parsedTime.value);
+    if (!tableNum) {
+      sendJson(res, 400, { error: 'На это время нет свободного столика. Попробуйте другую дату или время.' });
+      return true;
+    }
+
+    const preorderItems = items.map((entry) => {
+      const menuItem = MENU_ITEMS.find((item) => item.name === entry.name);
+      const quantity = Number(entry.quantity || 0);
+      if (!menuItem || !Number.isInteger(quantity) || quantity < 1) {
+        return null;
+      }
+      return buildOrderItem(menuItem, quantity);
+    }).filter(Boolean);
+
+    const bookingData = {
+      name: booking.name.trim(),
+      phone: normalizePhone(booking.phone),
+      date: parsed.parsedDate.value,
+      time: parsed.parsedTime.value,
+      guests,
+      tableNum,
+      preorderItems,
+      preorderTotal: calculateOrderTotal(preorderItems)
+    };
+
+    await saveBooking(bookingData);
+
+    const preorderBlock = preorderItems.length > 0
+      ? `\n🍽️ Предзаказ:\n${formatOrderItems(preorderItems)}\n\n💰 Предзаказ на сумму: ${formatMoney(bookingData.preorderTotal)}`
+      : '';
+
+    const managerMsg =
+      `🔔 Новая бронь с сайта!\n\n` +
+      `👤 Гость: ${bookingData.name}\n` +
+      `📞 Телефон: ${bookingData.phone}\n` +
+      `🪑 Столик: №${bookingData.tableNum}\n` +
+      `👥 Гостей: ${bookingData.guests}\n` +
+      `📅 Дата: ${bookingData.date}\n` +
+      `⏰ Время: ${bookingData.time}${preorderBlock}`;
+
+    await notifyManagers(managerMsg);
+
+    sendJson(res, 200, {
+      ok: true,
+      tableNum: bookingData.tableNum,
+      date: bookingData.date,
+      time: bookingData.time
+    });
+    return true;
+  }
+
+  if (pathname === '/api/client/track' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const orderCode = String(body.orderCode || '').trim().toUpperCase();
+
+    if (!orderCode) {
+      sendJson(res, 400, { error: 'Укажите номер заказа.' });
+      return true;
+    }
+
+    const order = await getOrderByCode(orderCode);
+    if (!order) {
+      sendJson(res, 404, { error: 'Заказ с таким номером не найден.' });
+      return true;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      order: serializeOrderForManager(order),
+      trackingText: buildOrderTrackingText(order)
+    });
+    return true;
+  }
+
+  return false;
+}
+
 async function handleManagerStatic(req, res, pathname) {
   if (!pathname.startsWith('/manager')) return false;
 
@@ -3330,6 +3557,30 @@ async function handleWebAppStatic(req, res, pathname) {
   return true;
 }
 
+async function handleClientStatic(req, res, pathname) {
+  if (pathname !== '/' && !pathname.startsWith('/client')) return false;
+
+  const filePath = getClientStaticFilePath(pathname);
+  if (!filePath) {
+    sendText(res, 403, 'Forbidden');
+    return true;
+  }
+
+  try {
+    const data = await fs.promises.readFile(filePath);
+    sendText(res, 200, data, getContentType(filePath));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      sendText(res, 404, 'Not found');
+      return true;
+    }
+
+    throw error;
+  }
+
+  return true;
+}
+
 function startManagerServer() {
   const server = http.createServer(async (req, res) => {
     try {
@@ -3344,6 +3595,10 @@ function startManagerServer() {
         return;
       }
 
+      if (await handleClientApi(req, res, pathname)) {
+        return;
+      }
+
       if (await handleManagerStatic(req, res, pathname)) {
         return;
       }
@@ -3352,8 +3607,7 @@ function startManagerServer() {
         return;
       }
 
-      if (pathname === '/') {
-        sendText(res, 200, 'Cafe bot is running. Manager panel: /manager');
+      if (await handleClientStatic(req, res, pathname)) {
         return;
       }
 
