@@ -131,11 +131,10 @@ const MENU_ITEMS = [
 ];
 
 const MAIN_KEYBOARD_ROWS = [
-  [{ text: '🍕 Заказать доставку' }, { text: '🪑 Забронировать стол' }],
-  [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
+  [{ text: '🍕 Заказать еду' }, { text: '🪑 Забронировать стол' }],
   [{ text: TRACK_ORDER_TEXT }, { text: REPEAT_ORDER_TEXT }],
-  [{ text: CREATOR_TEXT }],
-  [{ text: CONTACT_MANAGER_TEXT }]
+  [{ text: 'ℹ️ Помощь' }, { text: CONTACT_MANAGER_TEXT }],
+  [{ text: CREATOR_TEXT }]
 ];
 
 function createKeyboard(rows, isPersistent = false) {
@@ -144,21 +143,6 @@ function createKeyboard(rows, isPersistent = false) {
       keyboard: rows,
       resize_keyboard: true,
       is_persistent: isPersistent
-    }
-  };
-}
-
-function createWebAppKeyboard(webAppUrl) {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '🍕 Заказать еду', web_app: { url: webAppUrl } }],
-        [{ text: '🪑 Забронировать стол' }, { text: TRACK_ORDER_TEXT }],
-        [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
-        [{ text: REPEAT_ORDER_TEXT }, { text: CONTACT_MANAGER_TEXT }]
-      ],
-      resize_keyboard: true,
-      is_persistent: true
     }
   };
 }
@@ -290,11 +274,17 @@ function getWebAppUrl() {
 }
 
 function getMainKeyboard() {
-  const webAppUrl = getWebAppUrl();
-  if (webAppUrl) {
-    return createWebAppKeyboard(webAppUrl);
-  }
   return mainKeyboard;
+}
+
+async function configureTelegramMenuButton() {
+  try {
+    await bot.setChatMenuButton({
+      menu_button: { type: 'commands' }
+    });
+  } catch (error) {
+    console.error('Failed to reset Telegram menu button:', error.message);
+  }
 }
 
 function getSession(chatId) {
@@ -3779,12 +3769,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (text === '📋 Меню') {
-      await safeSendMenu(chatId);
-      await bot.sendMessage(chatId, 'Если захотите, сразу помогу оформить заказ или бронь.', getMainKeyboard());
-      return;
-    }
-
     if (text === 'ℹ️ Помощь') {
       await bot.sendMessage(
         chatId,
@@ -3809,7 +3793,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (text === '🍕 Заказать доставку') {
+    if (text === '🍕 Заказать доставку' || text === '🍕 Заказать еду') {
       await startOrder(chatId);
       return;
     }
@@ -3979,6 +3963,7 @@ bot.on('message', async (msg) => {
 });
 
 bootstrapManagerState();
+configureTelegramMenuButton();
 startManagerServer();
 
 console.log('Надёжный бот для кафе запущен!');
