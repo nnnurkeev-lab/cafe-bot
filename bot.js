@@ -152,7 +152,7 @@ function createWebAppKeyboard(webAppUrl) {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '🍕 Открыть меню', web_app: { url: webAppUrl } }],
+        [{ text: '🍕 Заказать еду', web_app: { url: webAppUrl } }],
         [{ text: '🪑 Забронировать стол' }, { text: TRACK_ORDER_TEXT }],
         [{ text: '📋 Меню' }, { text: 'ℹ️ Помощь' }],
         [{ text: REPEAT_ORDER_TEXT }, { text: CONTACT_MANAGER_TEXT }]
